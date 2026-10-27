@@ -1,91 +1,120 @@
+import { HTTPRateLimit } from "@survev/config/utils/rateLimit.ts";
 import { getLogger, withContext } from "@survev/logger/node.ts";
-import { Hono } from "hono";
-import { cors } from "hono/cors";
-import { createMiddleware } from "hono/factory";
-import { HTTPException } from "hono/http-exception";
-import { routePath } from "hono/route";
-import { AdminPrivateRouter } from "./admin/privateRoutes.ts";
+import { Elysia, NotFound, ParseError, status, ValidationError } from "elysia";
+import { autoHead } from "elysia/auto-head";
+import { AdminPrivateRoutes } from "./admin/privateRoutes.ts";
 import { auth } from "./auth/auth.ts";
-import { GamePrivateRouter } from "./game/privateRoutes.ts";
-import { GameRouter } from "./game/routes.ts";
+import { GamePrivateRoutes } from "./game/privateRoutes.ts";
+import { GameRoutes } from "./game/routes.ts";
 import { teamMenu } from "./game/teamMenu.ts";
-import { type ErrorBody, errorResponse, NotFound } from "./lib/errors.ts";
-import { privateMiddleware, rateLimitMiddleware } from "./lib/middleware.ts";
-import { ModerationPrivateRouter } from "./moderation/privateRoutes.ts";
-import { PassPrivateRouter } from "./pass/privateRoutes.ts";
-import { StatsPrivateRouter } from "./stats/privateRoutes.ts";
-import { StatsRouter } from "./stats/routes.ts";
-import { UserRouter } from "./user/routes.ts";
+import { type ErrorBody, errorResponse, InvalidParams, isApiError } from "./lib/errors.ts";
+import { macros } from "./lib/macros.ts";
+import { noteRequest, trackRequest } from "./lib/requestLog.ts";
+import { ModerationPrivateRoutes } from "./moderation/privateRoutes.ts";
+import { PassPrivateRoutes } from "./pass/privateRoutes.ts";
+import { StatsPrivateRoutes } from "./stats/privateRoutes.ts";
+import { StatsRoutes } from "./stats/routes.ts";
+import { UserRoutes } from "./user/routes.ts";
 
 const logger = getLogger(["api", "http"]);
 
 /** /private: only the game server and the discord bot call these, both send the api key */
-const privateRouter = new Hono()
-    .use(privateMiddleware)
-    .route("/", GamePrivateRouter)
-    .route("/", PassPrivateRouter)
-    .route("/", StatsPrivateRouter)
-    .route("/", ModerationPrivateRouter)
-    .route("/", AdminPrivateRouter);
+const privateRoutes = new Elysia({ prefix: "/private" })
+    .use(macros)
+    .guard({ private: true })
+    .use(GamePrivateRoutes)
+    .use(PassPrivateRoutes)
+    .use(StatsPrivateRoutes)
+    .use(ModerationPrivateRoutes)
+    .use(AdminPrivateRoutes);
 
-export type PrivateRouteApp = typeof privateRouter;
+export type PrivateRouteApp = typeof privateRoutes;
+
+// better-auth's own endpoints: /sign-in/social, /callback/discord, /sign-out, /mock (dev)
+// parse: "none" leaves the body to better-auth
+const authRateLimit = new HTTPRateLimit(5, 60 * 1000);
+const authRoutes = new Elysia({ prefix: "/api/auth" })
+    .use(macros)
+    .guard({ rateLimit: authRateLimit, parse: "none" })
+    .get("/*", ({ request }) => auth.handler(request))
+    .post("/*", ({ request }) => auth.handler(request));
 
 /** every route; importing this starts nothing, index.ts serves it and starts the timers */
-export const app = new Hono();
-
-// a thrown error is a bug, expected failures are Results (see errors.ts)
-app.onError((err: unknown, c) => {
-    if (err instanceof HTTPException && err.status < 500) {
-        return err.getResponse();
-    }
-    logger.error("http.unhandled", { err, route: routePath(c) });
-    return c.json<ErrorBody>({ error: "InternalError", message: "Internal Server Error" }, 500);
-});
-
-app.notFound((c) => errorResponse(c, new NotFound({ message: `${c.req.method} ${c.req.path} not found` })));
-
-/** the session middleware only runs on some routes, `user` is unset elsewhere */
-type MaybeUserEnv = { Variables: { user?: { id: string } | null } };
-
-// outermost, so it also sees the response onError builds. Everything inside runs with the requestId in the log context
-app.use(
-    "*",
-    createMiddleware<MaybeUserEnv>(async (c, next) => {
-        if (c.req.header("upgrade")?.toLowerCase() === "websocket") return next();
-        await withContext({ requestId: crypto.randomUUID() }, async () => {
+export const app = new Elysia({ strictPath: true })
+    // outermost, so it also sees the response onError builds. Everything inside runs with the requestId in the log context
+    .wrap((fetch) => (request: Request, ...rest: unknown[]) => {
+        if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return fetch(request, ...rest);
+        return withContext({ requestId: crypto.randomUUID() }, async () => {
             const start = performance.now();
-            await next();
-            const status = c.res.status;
-            logger[status >= 500 ? "error" : "info"]("http.request", {
-                method: c.req.method,
-                route: routePath(c),
-                status,
+            const info = trackRequest(request);
+            const res = await fetch(request, ...rest);
+            logger[res.status >= 500 ? "error" : "info"]("http.request", {
+                method: request.method,
+                // no route matched (404, CORS preflight): a constant, the path would be unbounded
+                route: info.route ?? "*",
+                status: res.status,
                 durationMs: Math.round(performance.now() - start),
-                userId: c.get("user")?.id,
+                userId: info.userId,
             });
+            return res;
         });
-    }),
-);
+    })
+    // the pattern of the matched route, `route` is only set for dynamic ones. The hook runs for every matched route
+    .onTransform("global", ({ request, route, path }) => {
+        noteRequest(request, { route: route ?? path });
+    })
+    // expected failures are returned (or thrown by a macro) ApiErrors, any other error is a bug
+    .onError("global", ({ error, request, route, path }) => {
+        // parse errors happen before onTransform. A NotFound matched no route, `path` is just the URL
+        if (!(error instanceof NotFound)) noteRequest(request, { route: route ?? path });
 
-app.use(
-    "/api/*",
-    cors({
-        origin: "*",
-        credentials: true,
-        allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allowHeaders: ["Origin", "Content-Type", "Accept", "X-Requested-With"],
-        maxAge: 3600,
-    }),
-);
+        if (isApiError(error)) return errorResponse(error);
+        if (error instanceof ValidationError) {
+            return errorResponse(new InvalidParams({ message: "Invalid params", issues: error.errors }));
+        }
+        if (error instanceof NotFound) {
+            return status(
+                404,
+                { error: "NotFound", message: `${request.method} ${path} not found` } satisfies ErrorBody,
+            );
+        }
+        // the body hono sent for invalid json
+        if (error instanceof ParseError) {
+            return new Response("Malformed JSON in request body", { status: 400 });
+        }
+        logger.error("http.unhandled", { err: error, route: route ?? path });
+        return status(500, { error: "InternalError", message: "Internal Server Error" } satisfies ErrorBody);
+    })
+    // same CORS headers as before, for /api only. @elysia/cors can't be limited to a path
+    // and sends extra headers (vary: *, every request header as expose-headers)
+    .onRequest(({ request, set }) => {
+        const { pathname } = new URL(request.url);
+        if (pathname !== "/api" && !pathname.startsWith("/api/")) return;
+        set.headers["access-control-allow-origin"] = "*";
+        set.headers["access-control-allow-credentials"] = "true";
+        if (request.method === "OPTIONS") {
+            return new Response(null, {
+                status: 204,
+                headers: {
+                    ...set.headers as Record<string, string>,
+                    "access-control-max-age": "3600",
+                    "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
+                    "access-control-allow-headers": "Origin,Content-Type,Accept,X-Requested-With",
+                    vary: "Access-Control-Request-Headers",
+                },
+            });
+        }
+    });
 
 // @TODO: figure out the origins for this..
 // app.use(csrf())
 
-app.route("/api/user/", UserRouter);
-// better-auth's own endpoints: /sign-in/social, /callback/discord, /sign-out, /mock (dev)
-app.use("/api/auth/*", rateLimitMiddleware(5, 60 * 1000));
-app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
-app.route("/api/", StatsRouter);
-app.route("/api/", GameRouter);
-app.route("/private/", privateRouter);
-app.route("/", teamMenu.router);
+app
+    .use(UserRoutes)
+    .use(authRoutes)
+    .use(StatsRoutes)
+    .use(GameRoutes)
+    .use(privateRoutes)
+    .use(teamMenu.routes)
+    // HEAD for every GET route, like hono
+    .use(autoHead());

@@ -1,12 +1,12 @@
 import { getLogger } from "@survev/logger/node.ts";
 import { Result, TaggedError } from "better-result";
-import type { Context } from "hono";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { status } from "elysia";
 
 const logger = getLogger(["api", "errors"]);
 
 //
-// expected failures, every route and helper returns these through a Result
+// expected failures, every helper returns these through a Result.
+// a route returns (or a hook throws) the error itself, app.ts turns it into the error body
 //
 
 export class InvalidParams extends TaggedError("InvalidParams")<{ message: string; issues?: unknown }> {}
@@ -38,7 +38,7 @@ const statusByTag = {
     RateLimited: 429,
     UpstreamError: 502,
     DatabaseError: 500,
-} as const satisfies Record<ApiError["_tag"], ContentfulStatusCode>;
+} as const satisfies Record<ApiError["_tag"], number>;
 
 /** the one error body the API sends */
 export interface ErrorBody {
@@ -47,18 +47,25 @@ export interface ErrorBody {
     issues?: unknown;
 }
 
+export function isApiError(error: unknown): error is ApiError {
+    return TaggedError.is(error) && Object.hasOwn(statusByTag, error._tag);
+}
+
 /** failures are logged where they happen (query, fetchJson), not here */
-export function errorResponse(c: Context, error: ApiError) {
-    const status = statusByTag[error._tag];
-    return c.json<ErrorBody, typeof status>(
-        { error: error._tag, message: error.message, ...("issues" in error && { issues: error.issues }) },
-        status,
+export function errorResponse(error: ApiError) {
+    return status(
+        statusByTag[error._tag],
+        {
+            error: error._tag,
+            message: error.message,
+            ...("issues" in error && { issues: error.issues }),
+        } satisfies ErrorBody,
     );
 }
 
-/** ok: 200 with the value, err: the error body with the error's status */
-export function respond<T>(c: Context, result: Result<T, ApiError>) {
-    return result.isOk() ? c.json(result.value, 200) : errorResponse(c, result.error);
+/** ok: 200 with the value, err: the error, sent as the error body */
+export function respond<T>(result: Result<T, ApiError>) {
+    return result.isOk() ? result.value : result.error;
 }
 
 /** run a query (or transaction), a rejection is logged and becomes a DatabaseError */

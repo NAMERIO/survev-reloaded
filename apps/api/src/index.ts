@@ -7,7 +7,6 @@ import {
     startProcessStats,
 } from "@survev/logger/node.ts";
 import { lt } from "drizzle-orm";
-import { websocket } from "hono/bun";
 import pkgJson from "../../../package.json" with { type: "json" };
 import { settings } from "./admin/settings.ts";
 import { app } from "./app.ts";
@@ -28,10 +27,8 @@ const logger = getLogger(["api"]);
 await settings.load();
 teamMenu.start();
 
-Bun.serve({
-    fetch: app.fetch,
+app.listen({
     port: env.API_PORT,
-    websocket,
     // Bun's default of 10 seconds is too short for some slow database queries
     idleTimeout: 60,
 });

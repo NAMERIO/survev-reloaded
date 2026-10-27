@@ -5,13 +5,10 @@ import {
     zUserStatsRequest,
 } from "@survev/shared/types/stats.ts";
 import { and, eq, gte, max, type SQL, sql, sum } from "drizzle-orm";
-import { Hono } from "hono";
+import { Elysia } from "elysia";
 import { db } from "../db/index.ts";
 import { matchData, users } from "../db/schema.ts";
 import { query, respond } from "../lib/errors.ts";
-import { validateParams } from "../lib/middleware.ts";
-
-export const UserStatsRouter = new Hono();
 
 /*
  * minimum data required for the ui to show the user doesn't exist
@@ -22,18 +19,16 @@ const emptyState = {
     modes: [],
 } as Partial<UserStatsResponse> as UserStatsResponse;
 
-UserStatsRouter.post(
-    "/",
-    validateParams(zUserStatsRequest),
-    async (c) => {
-        const { interval, mapIdFilter, slug } = c.req.valid("json");
-
+export const userStatsRoutes = new Elysia().post(
+    "/user_stats",
+    { body: zUserStatsRequest },
+    async ({ body: { interval, mapIdFilter, slug } }) => {
         const data = await query(async () => {
             const user = await db.query.users.findFirst({ where: { slug }, columns: { id: true } });
             return user ? userStatsSqlQuery(user.id, mapIdFilter, interval) : emptyState;
         });
 
-        return respond(c, data);
+        return respond(data);
     },
 );
 

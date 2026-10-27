@@ -95,22 +95,20 @@ class GameServer {
     reportFailing = false;
 
     async sendData() {
-        try {
-            await apiPrivateRouter.update_region.$post({
-                json: {
-                    data: {
-                        playerCount: this.manager.getPlayerCount(),
-                        url: env.REGION_URL,
-                        l10n: env.REGION_L10N,
-                    },
-                    regionId: env.REGION,
-                },
-            });
+        const { error } = await apiPrivateRouter.update_region.post({
+            data: {
+                playerCount: this.manager.getPlayerCount(),
+                url: env.REGION_URL,
+                l10n: env.REGION_L10N,
+            },
+            regionId: env.REGION,
+        });
+        if (error) {
+            if (!this.reportFailing) this.logger.error("region.update_failed", { err: error });
+            this.reportFailing = true;
+        } else {
             if (this.reportFailing) this.logger.info("region.update_recovered");
             this.reportFailing = false;
-        } catch (err) {
-            if (!this.reportFailing) this.logger.error("region.update_failed", { err });
-            this.reportFailing = true;
         }
     }
 
@@ -149,18 +147,10 @@ class GameServer {
 
         this.logger.info("lost_games.saving", { count: games.length });
 
-        let res: Pick<Response, "ok"> | undefined = undefined;
-        try {
-            res = await apiPrivateRouter.save_game.$post({
-                json: {
-                    matchData: games,
-                },
-            });
-        } catch (err) {
-            this.logger.error("lost_games.save_failed", { err });
-        }
-
-        if (res?.ok) {
+        const { error } = await apiPrivateRouter.save_game.post({ matchData: games });
+        if (error) {
+            this.logger.error("lost_games.save_failed", { err: error });
+        } else {
             this.logger.info("lost_games.saved", { count: games.length });
             // if we successfully saved the games we can remove them
             for (const fileName of files) {

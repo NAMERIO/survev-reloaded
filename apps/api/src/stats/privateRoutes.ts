@@ -1,11 +1,10 @@
 import { type SaveGameBody, zSaveGameMatchData } from "@survev/contracts";
 import { getLogger } from "@survev/logger/node.ts";
-import { Hono } from "hono";
+import { Elysia } from "elysia";
 import { z } from "zod";
 import { db } from "../db/index.ts";
 import { matchData, type MatchDataTable } from "../db/schema.ts";
-import { query, respond } from "../lib/errors.ts";
-import { validateParams } from "../lib/middleware.ts";
+import { query } from "../lib/errors.ts";
 import { logPlayerIps } from "../moderation/bans.ts";
 import { cache } from "./cache.ts";
 
@@ -20,20 +19,18 @@ type _SaveGameMatchDataFitsTable = AssertAssignable<
 >;
 
 /** /private/save_game: the game server saves finished games */
-export const StatsPrivateRouter = new Hono()
+export const StatsPrivateRoutes = new Elysia()
     .post(
         "/save_game",
-        validateParams(z.object({ matchData: zSaveGameMatchData.min(1) })),
-        async (c) => {
-            const rows = c.req.valid("json").matchData;
-
+        { body: z.object({ matchData: zSaveGameMatchData.min(1) }) },
+        async ({ body: { matchData: rows } }) => {
             // safe to send again: rows that already exist are skipped, match data and player ips alike
             const saved = await query(() => db.insert(matchData).values(rows).onConflictDoNothing());
-            if (saved.isErr()) return respond(c, saved);
+            if (saved.isErr()) return saved.error;
 
             await logPlayerIps(rows);
             await cache.invalidateLeaderboards(rows);
             logger.info("game.saved", { gameId: rows[0].gameId });
-            return c.json({ message: `Saved ${rows.length} rows` }, 200);
+            return { message: `Saved ${rows.length} rows` };
         },
     );

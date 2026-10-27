@@ -6,10 +6,11 @@ import { api } from "./api.ts";
 import { authClient } from "./authClient.ts";
 import type { ConfigManager } from "./config.ts";
 
+import { type Treaty, treaty } from "@elysia/eden";
 import type { UserRouterApp } from "@survev/api/types";
-import { hc, type InferResponseType } from "hono/client";
 
-type UserRouter = ReturnType<typeof hc<UserRouterApp>>;
+type UserRouter = ReturnType<typeof treaty<UserRouterApp>>["api"]["user"];
+type UserRoute = Exclude<keyof UserRouter, "~path">;
 
 type AccountEventMap = {
     request: (account: Account) => void;
@@ -42,29 +43,34 @@ export class Account {
     router: UserRouter;
 
     constructor(public config: ConfigManager) {
-        this.router = hc<UserRouterApp>(api.resolveUrl("/api/user"), {
-            fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-                fetch(input, { ...init, credentials: api.credentials() }),
-        });
+        // keepDomain: the url is relative when the API is on the same host
+        this.router = treaty<UserRouterApp>(api.resolveUrl(""), {
+            keepDomain: true,
+            // a fetcher, not fetch: { credentials }: api.credentials() changes once site_info loads
+            fetcher: ((input: RequestInfo | URL, init?: RequestInit) =>
+                fetch(input, { ...init, credentials: api.credentials() })) as typeof fetch,
+        }).api.user;
     }
 
-    async fetchApi<Path extends keyof UserRouter>(
+    async fetchApi<Path extends UserRoute>(
         path: Path,
-        body: Parameters<UserRouter[Path]["$post"]>[0],
+        body: Parameters<UserRouter[Path]["post"]>[0],
         cb: (
             error: null | any,
-            res: InferResponseType<UserRouter[Path]["$post"], 200>,
+            res: Treaty.Data<UserRouter[Path]["post"]>,
         ) => void,
     ): Promise<void> {
         this.requestsInFlight++;
         this.emit("request", this);
 
         try {
-            const res = await this.router[path].$post(body as any);
-            const data: object = await res.json();
+            const { data, error, response } = await this.router[path].post(body as any);
+            // no response: the request failed, error.value is what fetch threw
+            if (!response) throw error?.value;
             // the API's error body ({ error, message }); other non 2xx bodies like { result: "invalid" } are answers
-            if (!res.ok && "error" in data && "message" in data) throw new Error(`${path}: ${data.message}`);
-            cb(null, data as any);
+            const value = (error ? error.value : data) as any;
+            if (error && value && "error" in value && "message" in value) throw new Error(`${path}: ${value.message}`);
+            cb(null, value);
         } catch (err) {
             cb(err, {} as any);
         }
@@ -180,7 +186,7 @@ export class Account {
     }
 
     setUsername(username: string, callback: (err?: string) => void) {
-        this.fetchApi("username", { json: { username } }, (err, res) => {
+        this.fetchApi("username", { username }, (err, res) => {
             if (err) {
                 callback(err);
                 return;
@@ -203,7 +209,7 @@ export class Account {
 
         if (!this.loggedIn) return;
 
-        this.fetchApi("loadout", { json: { loadout } }, (err, res) => {
+        this.fetchApi("loadout", { loadout }, (err, res) => {
             if (err) {
                 this.emit("error", "server_error");
             }
@@ -230,16 +236,14 @@ export class Account {
 
             this.emit("items", this.items);
             this.fetchApi("set_item_status", {
-                json: {
-                    status,
-                    itemTypes,
-                },
+                status,
+                itemTypes,
             }, () => {});
         }
     }
 
     getPass(tryRefreshQuests: boolean) {
-        this.fetchApi("get_pass", { json: { tryRefreshQuests } }, (err, res) => {
+        this.fetchApi("get_pass", { tryRefreshQuests }, (err, res) => {
             this.pass = {} as PassState;
             this.quests = [];
             if (err || !res.success) {
@@ -259,7 +263,7 @@ export class Account {
     }
 
     setPassUnlock(unlockType: string) {
-        this.fetchApi("set_pass_unlock", { json: { unlockType } }, (err, res) => {
+        this.fetchApi("set_pass_unlock", { unlockType }, (err, res) => {
             if (err || !res.success) {
                 // unlock failed, nothing to refresh
             } else {
@@ -269,7 +273,7 @@ export class Account {
     }
 
     refreshQuest(idx: number) {
-        this.fetchApi("refresh_quest", { json: { idx } }, (err, res) => {
+        this.fetchApi("refresh_quest", { idx }, (err, res) => {
             if (err) {
                 return;
             }

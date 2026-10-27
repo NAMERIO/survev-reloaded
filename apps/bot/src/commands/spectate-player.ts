@@ -2,7 +2,7 @@ import type { ModRouterSpectateGameRes } from "@survev/contracts";
 import { GameConfig } from "@survev/shared/gameConfig.ts";
 import { type ChatInputCommandInteraction, EmbedBuilder, SlashCommandBuilder } from "discord.js";
 import { env } from "../env.ts";
-import { botLogger, Command, hasBotPermission, honoClient } from "../utils.ts";
+import { apiClient, apiMessage, botLogger, Command, hasBotPermission } from "../utils.ts";
 import { sendNoPermissionMessage } from "./helpers.ts";
 
 export const spectateCommandHandler = {
@@ -112,42 +112,35 @@ export const spectateCommandHandler = {
             });
         };
 
-        const res = await honoClient.moderation.spectate_player.$post({
-            json: {
-                filter: {
-                    type,
-                    value,
-                },
+        const res = await apiClient.moderation.spectate_player.post({
+            filter: {
+                type,
+                value,
             },
         });
 
-        // this can be undefined apparently??
-        if (!res.body) {
+        // for API errors like user not found
+        if (res.error) {
             await interaction.editReply({
-                content: "Failed to find players to spectate",
+                content: apiMessage(res),
             });
             return;
         }
-        const decoder = new TextDecoderStream();
-        res.body.pipeTo(decoder.writable);
 
-        for await (const read of decoder.readable) {
+        // eden yields the response as it streams in, each chunk is one or more json lines.
+        // a response that arrived in one piece (content-length, no chunking) is plain text instead,
+        // and a chunk that happens to be a single complete json value comes already parsed
+        const data: unknown = res.data;
+        const chunks = typeof data === "string" ? [data] : res.data;
+        for await (const chunk of chunks) {
+            const read = typeof chunk === "string" ? chunk : JSON.stringify(chunk);
             const values = read.split("\n");
 
             for (const value of values) {
                 if (!value) continue;
 
                 try {
-                    const jsonRes = JSON.parse(value) as { message: string } | ModRouterSpectateGameRes;
-
-                    // for API errors like user not found
-                    if ("message" in jsonRes) {
-                        await interaction.editReply({
-                            content: jsonRes.message,
-                        });
-                        return;
-                    }
-
+                    const jsonRes = JSON.parse(value) as ModRouterSpectateGameRes;
                     responses.push(jsonRes);
                     await editReply(jsonRes.done);
                 } catch (e) {

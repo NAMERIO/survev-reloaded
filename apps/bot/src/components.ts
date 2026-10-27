@@ -11,7 +11,7 @@ import {
     type StringSelectMenuInteraction,
 } from "discord.js";
 import { BUTTON_PREFIXES, type SelectedPlayer } from "./commands/search-player.ts";
-import { apiMessage, createCollector, honoClient } from "./utils.ts";
+import { apiClient, apiMessage, createCollector } from "./utils.ts";
 
 export async function createDiscordDropdownUI(
     interaction: RepliableInteraction,
@@ -147,17 +147,15 @@ export async function createDiscordPlayerInfoCardUI({
                 };
 
             if (selectedPlayer.slug) {
-                const res = await honoClient.moderation.ban_account.$post({
-                    json: {
-                        slug: selectedPlayer.slug,
-                        ban_reason: banReason,
-                        ip_ban_duration: ipBanDuration,
-                        ban_associated_ips: true,
-                        ip_ban_permanent: false,
-                        executor_id: executorId,
-                    },
+                const res = await apiClient.moderation.ban_account.post({
+                    slug: selectedPlayer.slug,
+                    ban_reason: banReason,
+                    ip_ban_duration: ipBanDuration,
+                    ban_associated_ips: true,
+                    ip_ban_permanent: false,
+                    executor_id: executorId,
                 });
-                await clearEmbedWithMessage(interaction, await apiMessage(res));
+                await clearEmbedWithMessage(interaction, apiMessage(res));
                 return;
             }
 
@@ -166,16 +164,14 @@ export async function createDiscordPlayerInfoCardUI({
                 ipsToBan.push(selectedPlayer.findGameIp);
             }
 
-            const res = await honoClient.moderation.ban_ip.$post({
-                json: {
-                    ips: ipsToBan,
-                    ip_ban_duration: ipBanDuration,
-                    ban_reason: banReason,
-                    executor_id: executorId,
-                },
+            const res = await apiClient.moderation.ban_ip.post({
+                ips: ipsToBan,
+                ip_ban_duration: ipBanDuration,
+                ban_reason: banReason,
+                executor_id: executorId,
             });
 
-            await clearEmbedWithMessage(interaction, await apiMessage(res));
+            await clearEmbedWithMessage(interaction, apiMessage(res));
         },
     });
 }

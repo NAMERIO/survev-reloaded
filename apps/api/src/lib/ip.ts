@@ -1,16 +1,17 @@
 import { getLogger } from "@survev/logger/node.ts";
-import type { Context } from "hono";
-import { getConnInfo } from "hono/bun";
+import type { Server } from "elysia";
 import { isIP } from "node:net";
 import { env } from "../env.ts";
 import { fetchJson } from "./fetchJson.ts";
 
 const logger = getLogger(["api", "ip"]);
 
-export function getHonoIp(c: Context, proxyHeader?: string): string | undefined {
+/** the proxy header if one is configured, else the socket address */
+export function getIp(request: Request, server: Server | null): string | undefined {
+    const proxyHeader = env.PROXY_IP_HEADER;
     const ip = proxyHeader
-        ? c.req.header(proxyHeader)
-        : getConnInfo(c).remote.address;
+        ? request.headers.get(proxyHeader)
+        : server?.requestIP(request)?.address;
 
     if (!ip || isIP(ip) == 0) return undefined;
     if (ip.includes("::ffff:")) return ip.split("::ffff:")[1];

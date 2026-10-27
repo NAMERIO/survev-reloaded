@@ -1,3 +1,4 @@
+import { HTTPRateLimit } from "@survev/config/utils/rateLimit.ts";
 import { UnlockDefs } from "@survev/shared/defs/gameObjects/unlockDefs.ts";
 import { checkForBadWords } from "@survev/shared/utils/badWords.ts";
 import { util } from "@survev/shared/utils/util.ts";
@@ -5,6 +6,9 @@ import { generateRandomString } from "better-auth/crypto";
 import slugify from "slugify";
 import { db } from "../db/index.ts";
 import { items } from "../db/schema.ts";
+
+/** one budget for the /api/user routes, pass routes included */
+export const userRateLimit = new HTTPRateLimit(40, 60 * 1000);
 
 export function randomId(length: number) {
     return generateRandomString(length, "a-z", "0-9");

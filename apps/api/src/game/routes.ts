@@ -1,23 +1,23 @@
 import { GIT_VERSION } from "@survev/config/utils/gitRevision.ts";
 import { HTTPRateLimit } from "@survev/config/utils/rateLimit.ts";
 import { type FindGameResponse, type SiteInfoRes, zFindGameBody } from "@survev/shared/types/api.ts";
-import { Hono } from "hono";
+import { Elysia, status } from "elysia";
 import { randomUUID } from "node:crypto";
 import { settings } from "../admin/settings.ts";
-import { sessionMiddleware } from "../auth/session.ts";
+import { session } from "../auth/session.ts";
 import { env } from "../env.ts";
-import { getHonoIp, isBehindProxy, verifyTurnstile } from "../lib/ip.ts";
-import { rateLimitMiddleware, validateParams } from "../lib/middleware.ts";
+import { getIp, isBehindProxy, verifyTurnstile } from "../lib/ip.ts";
 import { banInfo, findIpBan } from "../moderation/bans.ts";
 import { findGame, getFindGamePlayerData, siteRegions } from "./regions.ts";
 
-// not using the middleware here to not add extra indentation... smh
+// not using the macro: rate limited find_game requests get a FindGameResponse
 const findGameRateLimit = new HTTPRateLimit(5, 3000);
 
 /** what the client needs to show the play menu and join a game */
-export const GameRouter = new Hono()
-    .get("/site_info", (c) => {
-        return c.json<SiteInfoRes>({
+export const GameRoutes = new Elysia({ prefix: "/api" })
+    .use(session)
+    .get("/site_info", (): SiteInfoRes => {
+        return {
             modes: [...settings.modes],
             regions: siteRegions(),
             turnstileSiteKey: env.TURNSTILE_SITE_KEY,
@@ -28,53 +28,51 @@ export const GameRouter = new Hono()
             gitRevision: GIT_VERSION,
             captchaEnabled: settings.captchaEnabled,
             clientTheme: settings.clientTheme,
-        }, 200);
+        };
     })
-    .post("/find_game", (c) => {
-        return c.json({ error: "invalid_protocol" });
+    .post("/find_game", () => {
+        return { error: "invalid_protocol" };
     })
-    .post("/find_game_v2", validateParams(zFindGameBody), sessionMiddleware, async (c) => {
-        const ip = getHonoIp(c, env.PROXY_IP_HEADER);
+    .post("/find_game_v2", { body: zFindGameBody, session: true }, async ({ body, request, server, ...ctx }) => {
+        const ip = getIp(request, server);
 
         if (!ip) {
-            return c.json<FindGameResponse>({ type: "error", error: "invalid_ip" }, 500);
+            return status(500, { type: "error", error: "invalid_ip" } satisfies FindGameResponse);
         }
 
         if (findGameRateLimit.isRateLimited(ip)) {
-            return c.json<FindGameResponse>({ type: "error", error: "rate_limited" }, 429);
+            return status(429, { type: "error", error: "rate_limited" } satisfies FindGameResponse);
         }
 
         const ban = await findIpBan(ip);
         if (ban) {
-            return c.json<FindGameResponse>({ type: "banned", ...banInfo(ban) });
+            return { type: "banned", ...banInfo(ban) } satisfies FindGameResponse;
         }
 
         const joinToken = randomUUID();
         // banned accounts can still play, just not as their account
-        const user = c.var.user?.banned ? null : c.var.user;
+        const user = ctx.user?.banned ? null : ctx.user;
 
         if (await isBehindProxy(ip, !user)) {
-            return c.json<FindGameResponse>({ type: "error", error: "behind_proxy" });
+            return { type: "error", error: "behind_proxy" } satisfies FindGameResponse;
         }
-
-        const body = c.req.valid("json");
 
         const mode = settings.modes[body.gameModeIdx];
         if (!mode || !mode.enabled) {
-            return c.json<FindGameResponse>({ type: "error", error: "mode_disabled" });
+            return { type: "error", error: "mode_disabled" } satisfies FindGameResponse;
         }
 
         if (settings.captchaEnabled && !user) {
             if (!body.turnstileToken) {
-                return c.json<FindGameResponse>({ type: "error", error: "invalid_captcha" });
+                return { type: "error", error: "invalid_captcha" } satisfies FindGameResponse;
             }
 
             const captcha = await verifyTurnstile(body.turnstileToken, ip);
             if (captcha.isErr()) {
-                return c.json<FindGameResponse>({ type: "error", error: "invalid_captcha" }, 500);
+                return status(500, { type: "error", error: "invalid_captcha" } satisfies FindGameResponse);
             }
             if (!captcha.value) {
-                return c.json<FindGameResponse>({ type: "error", error: "invalid_captcha" });
+                return { type: "error", error: "invalid_captcha" } satisfies FindGameResponse;
             }
         }
 
@@ -96,14 +94,14 @@ export const GameRouter = new Hono()
         });
 
         if ("error" in data) {
-            return c.json<FindGameResponse>({ type: "error", error: data.error });
+            return { type: "error", error: data.error } satisfies FindGameResponse;
         }
 
-        return c.json<FindGameResponse>({
+        return {
             type: "success",
             res: {
                 joinToken,
                 urls: data.urls,
             },
-        });
+        } satisfies FindGameResponse;
     });

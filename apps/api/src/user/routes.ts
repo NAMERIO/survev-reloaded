@@ -5,26 +5,23 @@ import { type ProfileResponse, type UsernameResponse } from "@survev/shared/type
 import { validateUserName } from "@survev/shared/utils/badWords.ts";
 import loadout, { ItemStatus, type Loadout } from "@survev/shared/utils/loadout.ts";
 import { and, eq, inArray } from "drizzle-orm";
-import { type Context, Hono } from "hono";
+import { Elysia, type HTTPHeaders, status } from "elysia";
 import z from "zod";
 import { auth } from "../auth/auth.ts";
-import type { AuthEnv } from "../auth/session.ts";
-import { requireAuth, sessionMiddleware } from "../auth/session.ts";
+import { appendCookies, session } from "../auth/session.ts";
 import { db } from "../db/index.ts";
 import { itemColumns, items, matchData, users } from "../db/schema.ts";
-import { errorResponse, query, respond } from "../lib/errors.ts";
-import { rateLimitMiddleware, validateParams } from "../lib/middleware.ts";
-import { PassRouter } from "../pass/routes.ts";
-import { getTimeUntilNextUsernameChange, sanitizeSlug } from "./users.ts";
+import { query, respond } from "../lib/errors.ts";
+import { macros } from "../lib/macros.ts";
+import { PassRoutes } from "../pass/routes.ts";
+import { getTimeUntilNextUsernameChange, sanitizeSlug, userRateLimit } from "./users.ts";
 
-export const UserRouter = new Hono<AuthEnv>()
-    .use(rateLimitMiddleware(40, 60 * 1000))
-    .use(sessionMiddleware)
-    .use(requireAuth)
-    .route("/", PassRouter)
-    .post("/profile", async (c) => {
-        const user = c.get("user");
-
+export const UserRoutes = new Elysia({ prefix: "/api/user" })
+    .use(macros)
+    .use(session)
+    .use(PassRoutes)
+    .guard({ rateLimit: userRateLimit, auth: true })
+    .post("/profile", async ({ user, request, set }) => {
         const {
             loadout,
             slug,
@@ -39,12 +36,12 @@ export const UserRouter = new Hono<AuthEnv>()
                 where: { kind: "account", target: user.id, revokedAt: { isNull: true } },
                 columns: { reason: true },
             });
-            await logout(c);
+            await logout(request, set);
 
-            return c.json<ProfileResponse>({
+            return {
                 banned: true,
                 reason: ban?.reason ?? "",
-            });
+            } satisfies ProfileResponse;
         }
 
         const timeUntilNextChange = getTimeUntilNextUsernameChange(lastUsernameChangeTime);
@@ -57,48 +54,48 @@ export const UserRouter = new Hono<AuthEnv>()
                 columns: itemColumns,
             })
         );
-        if (ownedItems.isErr()) return errorResponse(c, ownedItems.error);
+        if (ownedItems.isErr()) return ownedItems.error;
 
-        return c.json<ProfileResponse>(
-            {
-                success: true,
-                profile: {
-                    slug,
-                    // every account is created through a login provider
-                    linked: true,
-                    username,
-                    usernameSet,
-                    usernameChangeTime: timeUntilNextChange,
-                },
-                loadout: loadout as Loadout,
-                items: ownedItems.value,
+        return {
+            success: true,
+            profile: {
+                slug,
+                // every account is created through a login provider
+                linked: true,
+                username,
+                usernameSet,
+                usernameChangeTime: timeUntilNextChange,
             },
-            200,
-        );
+            loadout: loadout as Loadout,
+            items: ownedItems.value,
+        } satisfies ProfileResponse;
     })
     .post(
         "/username",
-        validateParams(
-            z.object({
+        {
+            // an invalid body gets { result: "invalid" }, which the client shows, not the usual error body.
+            // (a route error hook can't do it: app.ts's error handler runs first)
+            body: z.object({
                 username: z.string().trim().min(1).max(Constants.PlayerNameMaxLen),
-            }),
-            { result: "invalid" } satisfies UsernameResponse,
-        ),
-        async (c) => {
-            const user = c.get("user");
-            const { username } = c.req.valid("json");
+            }).catch({ username: "" }),
+        },
+        async ({ user, body: { username } }) => {
+            if (!username) {
+                return status(400, { result: "invalid" } satisfies UsernameResponse);
+            }
+
             const timeUntilNextChange = getTimeUntilNextUsernameChange(
                 user.lastUsernameChangeTime,
             );
 
             if (timeUntilNextChange > 0) {
-                return c.json<UsernameResponse>({ result: "change_time_not_expired" }, 200);
+                return { result: "change_time_not_expired" } satisfies UsernameResponse;
             }
 
             const { validName, originalWasInvalid } = validateUserName(username);
 
             if (originalWasInvalid) {
-                return c.json<UsernameResponse>({ result: "invalid" }, 200);
+                return { result: "invalid" } satisfies UsernameResponse;
             }
 
             const slug = sanitizeSlug(validName);
@@ -109,7 +106,7 @@ export const UserRouter = new Hono<AuthEnv>()
             });
 
             if (slugTaken) {
-                return c.json<UsernameResponse>({ result: "taken" }, 200);
+                return { result: "taken" } satisfies UsernameResponse;
             }
 
             const updated = await query(
@@ -127,30 +124,29 @@ export const UserRouter = new Hono<AuthEnv>()
             );
 
             return updated.isOk()
-                ? c.json<UsernameResponse>({ result: "success" }, 200)
-                : c.json<UsernameResponse>({ result: "failed" }, 500);
+                ? { result: "success" } satisfies UsernameResponse
+                : status(500, { result: "failed" } satisfies UsernameResponse);
         },
     )
-    .post("/loadout", validateParams(z.object({ loadout: loadoutSchema })), async (c) => {
-        const user = c.get("user");
-        const { loadout: userLoadout } = c.req.valid("json");
-
-        const saved = await query(async () => {
-            const ownedItems = await db.query.items.findMany({
-                where: { userId: user.id },
-                columns: itemColumns,
+    .post(
+        "/loadout",
+        { body: z.object({ loadout: loadoutSchema }) },
+        async ({ user, body: { loadout: userLoadout } }) => {
+            const saved = await query(async () => {
+                const ownedItems = await db.query.items.findMany({
+                    where: { userId: user.id },
+                    columns: itemColumns,
+                });
+                const validatedLoadout = loadout.validateWithAvailableItems(userLoadout, ownedItems);
+                await db.update(users).set({ loadout: validatedLoadout }).where(eq(users.id, user.id));
+                return { loadout: validatedLoadout };
             });
-            const validatedLoadout = loadout.validateWithAvailableItems(userLoadout, ownedItems);
-            await db.update(users).set({ loadout: validatedLoadout }).where(eq(users.id, user.id));
-            return { loadout: validatedLoadout };
-        });
 
-        return respond(c, saved);
-    })
-    .post("/delete", async (c) => {
-        const user = c.get("user");
-
-        await logout(c);
+            return respond(saved);
+        },
+    )
+    .post("/delete", async ({ user, request, set }) => {
+        await logout(request, set);
 
         // sessions, accounts, items and pass data cascade with the user row
         const deleted = await query(() =>
@@ -160,19 +156,18 @@ export const UserRouter = new Hono<AuthEnv>()
             })
         );
 
-        if (deleted.isErr()) return errorResponse(c, deleted.error);
-        return c.json({}, 200);
+        if (deleted.isErr()) return deleted.error;
+        return {};
     })
     .post(
         "/set_item_status",
-        validateParams(z.object({
-            status: z.enum(ItemStatus),
-            itemTypes: z.array(z.string()).max(50),
-        })),
-        async (c) => {
-            const user = c.get("user");
-            const { itemTypes, status } = c.req.valid("json");
-
+        {
+            body: z.object({
+                status: z.enum(ItemStatus),
+                itemTypes: z.array(z.string()).max(50),
+            }),
+        },
+        async ({ user, body: { itemTypes, status } }) => {
             const updated = await query(() =>
                 db
                     .update(items)
@@ -180,27 +175,23 @@ export const UserRouter = new Hono<AuthEnv>()
                     .where(and(eq(items.userId, user.id), inArray(items.type, itemTypes)))
             );
 
-            if (updated.isErr()) return errorResponse(c, updated.error);
-            return c.json({}, 200);
+            if (updated.isErr()) return updated.error;
+            return {};
         },
     )
-    .post("/reset_stats", async (c) => {
-        const user = c.get("user");
-
+    .post("/reset_stats", async ({ user }) => {
         const reset = await query(() =>
             db.update(matchData).set({ userId: null }).where(eq(matchData.userId, user.id))
         );
 
-        if (reset.isErr()) return errorResponse(c, reset.error);
-        return c.json({}, 200);
+        if (reset.isErr()) return reset.error;
+        return {};
     });
 
-export type UserRouterApp = typeof UserRouter;
+export type UserRouterApp = typeof UserRoutes;
 
 /** ends the current session and clears its cookies */
-async function logout(c: Context) {
-    const res = await auth.api.signOut({ headers: c.req.raw.headers, returnHeaders: true });
-    for (const cookie of res.headers.getSetCookie()) {
-        c.header("set-cookie", cookie, { append: true });
-    }
+async function logout(request: Request, set: { headers: HTTPHeaders }) {
+    const res = await auth.api.signOut({ headers: request.headers, returnHeaders: true });
+    appendCookies(set, res.headers);
 }

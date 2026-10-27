@@ -5,78 +5,67 @@ import { TeamMode } from "@survev/shared/gameConfig.ts";
 import { zGiveItemParams, zRemoveItemParams } from "@survev/shared/types/moderation.ts";
 import { Result } from "better-result";
 import { and, eq } from "drizzle-orm";
-import { Hono } from "hono";
+import { Elysia, status } from "elysia";
 import { z } from "zod";
 import { MOCK_USER_ID } from "../auth/mockLogin.ts";
 import { db } from "../db/index.ts";
 import { items, matchData, type MatchDataTable } from "../db/schema.ts";
-import { Conflict, errorResponse, InvalidParams, query, queryOne, respond } from "../lib/errors.ts";
-import { validateParams } from "../lib/middleware.ts";
+import { Conflict, InvalidParams, query, queryOne, respond } from "../lib/errors.ts";
 import { cache } from "../stats/cache.ts";
 import { settings } from "./settings.ts";
 
 /** /private routes the discord bot and admins call */
-export const AdminPrivateRouter = new Hono()
-    .post("/set_game_mode", validateParams(zSetGameModeBody), async (c) => {
+export const AdminPrivateRoutes = new Elysia()
+    .post("/set_game_mode", { body: zSetGameModeBody }, async ({ body }) => {
         const {
             index,
             map_name: mapName,
             team_mode: teamMode,
             enabled,
-        } = c.req.valid("json");
+        } = body;
 
         if (!MapDefs[mapName as MapDefKey]) {
-            return errorResponse(c, new InvalidParams({ message: "Invalid map name" }));
+            return new InvalidParams({ message: "Invalid map name" });
         }
 
         const set = await settings.setMode(index, { mapName: mapName as MapDefKey, teamMode, enabled });
-        if (set.isErr()) return errorResponse(c, set.error);
+        if (set.isErr()) return set.error;
 
-        return c.json(
-            { message: `Set mode ${index} to ${JSON.stringify(settings.modes[index])}` },
-            200,
-        );
+        return { message: `Set mode ${index} to ${JSON.stringify(settings.modes[index])}` };
     })
-    .post("/set_client_theme", validateParams(zSetClientThemeBody), async (c) => {
-        const { theme } = c.req.valid("json");
-
+    .post("/set_client_theme", { body: zSetClientThemeBody }, async ({ body: { theme } }) => {
         if (!MapDefs[theme as MapDefKey]) {
-            return errorResponse(c, new InvalidParams({ message: "Invalid map name" }));
+            return new InvalidParams({ message: "Invalid map name" });
         }
 
         const set = await settings.setClientTheme(theme as MapDefKey);
-        if (set.isErr()) return errorResponse(c, set.error);
+        if (set.isErr()) return set.error;
 
-        return c.json({ message: `Set client theme to ${theme}` }, 200);
+        return { message: `Set client theme to ${theme}` };
     })
     .post(
         "/toggle_captcha",
-        validateParams(
-            z.object({
+        {
+            body: z.object({
                 enabled: z.boolean(),
             }),
-        ),
-        async (c) => {
-            const { enabled } = c.req.valid("json");
-
+        },
+        async ({ body: { enabled } }) => {
             const set = await settings.setCaptchaEnabled(enabled);
-            if (set.isErr()) return errorResponse(c, set.error);
+            if (set.isErr()) return set.error;
 
-            return c.json({ state: enabled, message: `Captcha ${enabled ? "enabled" : "disabled"}` }, 200);
+            return { state: enabled, message: `Captcha ${enabled ? "enabled" : "disabled"}` };
         },
     )
     .post(
         "/give_item",
-        validateParams(zGiveItemParams),
-        async (c) => {
-            const { item, slug, source } = c.req.valid("json");
-
+        { body: zGiveItemParams },
+        async ({ body: { item, slug, source } }) => {
             if (!GameObjectDefs.typeToDefSafe(item)) {
-                return errorResponse(c, new InvalidParams({ message: "Invalid item type" }));
+                return new InvalidParams({ message: "Invalid item type" });
             }
 
             return respond(
-                c,
                 await Result.gen(async function*() {
                     const user = yield* Result.await(queryOne(
                         () =>
@@ -103,12 +92,9 @@ export const AdminPrivateRouter = new Hono()
     )
     .post(
         "/remove_item",
-        validateParams(zRemoveItemParams),
-        async (c) => {
-            const { item, slug } = c.req.valid("json");
-
+        { body: zRemoveItemParams },
+        async ({ body: { item, slug } }) => {
             return respond(
-                c,
                 await Result.gen(async function*() {
                     const user = yield* Result.await(queryOne(
                         () => db.query.users.findFirst({ where: { slug }, columns: { id: true } }),
@@ -122,23 +108,22 @@ export const AdminPrivateRouter = new Hono()
             );
         },
     )
-    .post("/clear_cache", async (c) => {
+    .post("/clear_cache", async () => {
         const removed = await cache.clearCache();
-        return c.json({ message: `Successfully cleared leaderboard cache (${removed} keys)` }, 200);
+        return { message: `Successfully cleared leaderboard cache (${removed} keys)` };
     })
     .post(
         "/test/insert_game",
-        validateParams(
-            z.object({
+        {
+            body: z.object({
                 kills: z.number().default(1),
             }),
-        ),
-        async (c) => {
+        },
+        async ({ body: data }) => {
             if (process.env.NODE_ENV === "production") {
-                return c.json({}, 403);
+                return status(403, {});
             }
 
-            const data = c.req.valid("json");
             const row: MatchDataTable = {
                 gameId: crypto.randomUUID(),
                 userId: MOCK_USER_ID,
@@ -169,6 +154,6 @@ export const AdminPrivateRouter = new Hono()
             };
             await cache.invalidateLeaderboards([row]);
             await db.insert(matchData).values(row);
-            return c.json({ success: true }, 200);
+            return { success: true };
         },
     );

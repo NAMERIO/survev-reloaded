@@ -9,12 +9,12 @@
     "preview": "bun --bun vite preview"
   },
   "dependencies": {
+    "@elysia/eden": "2.0.0-rc.0",
     "@survev/shared": "workspace:*",
     "@taufik-nurrohman/color-picker": "1.4.2",
     "better-auth": "^1.7.8",
     "bootstrap": "^4.6.2",
     "ejs": "^4.0.1",
-    "hono": "^4.13.8",
     "jquery": "^3.7.1",
     "pixi.js-legacy": "^7.4.3",
     "slugify": "^1.6.9"

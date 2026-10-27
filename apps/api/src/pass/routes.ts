@@ -4,14 +4,15 @@ import { type GetPassResponse } from "@survev/shared/types/user.ts";
 import { passUtil } from "@survev/shared/utils/passUtil.ts";
 import { util } from "@survev/shared/utils/util.ts";
 import { and, eq, inArray } from "drizzle-orm";
-import { Hono } from "hono";
+import { Elysia } from "elysia";
 import z from "zod";
 import { settings } from "../admin/settings.ts";
-import type { AuthEnv } from "../auth/session.ts";
+import { session } from "../auth/session.ts";
 import { db } from "../db/index.ts";
 import { userPasses, type UserPassTableSelect, userQuests, type UserQuestTableSelect } from "../db/schema.ts";
-import { errorResponse, query, respond } from "../lib/errors.ts";
-import { validateParams } from "../lib/middleware.ts";
+import { query, respond } from "../lib/errors.ts";
+import { macros } from "../lib/macros.ts";
+import { userRateLimit } from "../user/users.ts";
 import { questHelpers } from "./quests.ts";
 
 // hardcoded for now
@@ -143,19 +144,23 @@ async function rerollSlot(
     return questType;
 }
 
-export const PassRouter = new Hono<AuthEnv>()
+/** mounted under /api/user, behind the same checks as the user routes */
+export const PassRoutes = new Elysia()
+    .use(macros)
+    .use(session)
+    .guard({ rateLimit: userRateLimit, auth: true })
     .post(
         "/get_pass",
-        validateParams(z.object({
-            tryRefreshQuests: z.boolean(),
-        })),
-        async (c) => {
-            const user = c.get("user");
-            const { tryRefreshQuests } = c.req.valid("json");
+        {
+            body: z.object({
+                tryRefreshQuests: z.boolean(),
+            }),
+        },
+        async ({ user, body: { tryRefreshQuests } }) => {
             const now = Date.now();
 
             const loaded = await query(() => getPassAndQuests(user.id, now), "Failed to load pass");
-            if (loaded.isErr()) return errorResponse(c, loaded.error);
+            if (loaded.isErr()) return loaded.error;
             const { pass, quests } = loaded.value;
 
             let activeQuests = quests;
@@ -204,31 +209,28 @@ export const PassRouter = new Hono<AuthEnv>()
             }
 
             const { level, xp } = passUtil.getPassLevelAndXp(pass.passType, pass.totalXp);
-            return c.json<GetPassResponse>(
-                {
-                    success: true,
-                    pass: {
-                        type: pass.passType,
-                        level,
-                        xp,
-                        unlocks: pass.unlocks || {},
-                        newItems: pass.newItems,
-                    },
-                    quests: activeQuests.map((quest) => ({
-                        idx: quest.idx,
-                        type: quest.questType,
-                        progress: quest.progress,
-                        target: quest.target,
-                        complete: quest.complete,
-                        rerolled: quest.rerolled,
-                        timeToRefresh: quest.nextRefreshAt - now,
-                    })),
+            return {
+                success: true,
+                pass: {
+                    type: pass.passType,
+                    level,
+                    xp,
+                    unlocks: pass.unlocks || {},
+                    newItems: pass.newItems,
                 },
-                200,
-            );
+                quests: activeQuests.map((quest) => ({
+                    idx: quest.idx,
+                    type: quest.questType,
+                    progress: quest.progress,
+                    target: quest.target,
+                    complete: quest.complete,
+                    rerolled: quest.rerolled,
+                    timeToRefresh: quest.nextRefreshAt - now,
+                })),
+            } satisfies GetPassResponse;
         },
     )
-    .post("/refresh_quest", validateParams(z.object({ idx: z.number() })), async (c) => {
+    .post("/refresh_quest", { body: z.object({ idx: z.number() }) }, async ({ user, body: { idx } }) => {
         /**
          * Refreshing quests can have a race condition that may end up with the user getting duplicated quests
          *
@@ -242,9 +244,6 @@ export const PassRouter = new Hono<AuthEnv>()
          *  - Server writes new quest for request with quest IDX 0
          *  - The request with IDX 1 now has outdated quests and can end up choosing the same quest as IDX 0
          */
-        const user = c.get("user");
-        const { idx } = c.req.valid("json");
-
         const success = await query(() =>
             db.transaction(async (transaction) => {
                 const quests = await transaction
@@ -280,18 +279,20 @@ export const PassRouter = new Hono<AuthEnv>()
             })
         );
 
-        return respond(c, success.map((success) => ({ success })));
+        return respond(success.map((success) => ({ success })));
     })
     .post(
         "/set_pass_unlock",
-        validateParams(z.object({
-            unlockType: z.string(),
-        })),
-        (c) => {
+        {
+            body: z.object({
+                unlockType: z.string(),
+            }),
+        },
+        () => {
             // survev has not social media
             // trivial to add tho
 
-            return c.json({ success: true }, 200);
+            return { success: true };
         },
     );
 

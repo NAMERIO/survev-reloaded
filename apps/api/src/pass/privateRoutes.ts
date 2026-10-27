@@ -1,19 +1,18 @@
 import { QuestDefs } from "@survev/shared/defs/gameObjects/questDefs.ts";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
+import { Elysia } from "elysia";
 import { z } from "zod";
 import { db } from "../db/index.ts";
 import { userQuests } from "../db/schema.ts";
 import { query, respond } from "../lib/errors.ts";
-import { validateParams } from "../lib/middleware.ts";
 import { incrementPassXp } from "./xp.ts";
 
 /** /private/quest_progress: the game server reports quest progress of logged in players */
-export const PassPrivateRouter = new Hono()
+export const PassPrivateRoutes = new Elysia()
     .post(
         "/quest_progress",
-        validateParams(
-            z.object({
+        {
+            body: z.object({
                 userId: z.string(),
                 progress: z
                     .array(
@@ -27,12 +26,10 @@ export const PassPrivateRouter = new Hono()
                         { message: "duplicate quest ids" },
                     ),
             }),
-        ),
-        async (c) => {
-            const { userId, progress } = c.req.valid("json");
-
+        },
+        async ({ body: { userId, progress } }) => {
             if (progress.length === 0) {
-                return c.json({ success: true }, 200);
+                return { success: true };
             }
 
             const validEntries = progress
@@ -40,7 +37,7 @@ export const PassPrivateRouter = new Hono()
                 .filter((e) => QuestDefs[e.id] && e.delta > 0);
 
             if (validEntries.length === 0) {
-                return c.json({ success: true }, 200);
+                return { success: true };
             }
 
             const deltaById = new Map(validEntries.map((e) => [e.id, e.delta]));
@@ -80,6 +77,6 @@ export const PassPrivateRouter = new Hono()
                 })
             );
 
-            return respond(c, saved.map(() => ({ success: true })));
+            return respond(saved.map(() => ({ success: true })));
         },
     );

@@ -14,22 +14,20 @@ import {
     zTeamClientMsg,
 } from "@survev/shared/types/team.ts";
 import { validateUserName } from "@survev/shared/utils/badWords.ts";
-import { assert, util } from "@survev/shared/utils/util.ts";
-import { Hono } from "hono";
-import { upgradeWebSocket } from "hono/bun";
-import type { WSContext } from "hono/ws";
+import { util } from "@survev/shared/utils/util.ts";
+import { Elysia } from "elysia";
+import { websocket } from "elysia/websocket";
 import { randomUUID } from "node:crypto";
 import { settings } from "../admin/settings.ts";
-import { sessionMiddleware } from "../auth/session.ts";
-import { env } from "../env.ts";
-import { getHonoIp, isBehindProxy, verifyTurnstile } from "../lib/ip.ts";
+import { session } from "../auth/session.ts";
+import { getIp, isBehindProxy, verifyTurnstile } from "../lib/ip.ts";
 import { findIpBan, hashIp } from "../moderation/bans.ts";
 import { findGame, getFindGamePlayerData, isRegion, regionIds } from "./regions.ts";
 
-interface SocketData {
-    rateLimit: Record<symbol, number>;
-    player: Player;
-    ip: string;
+/** the part of the socket the team menu uses */
+interface Socket {
+    send(data: string): unknown;
+    close(): void;
 }
 
 class Player {
@@ -64,7 +62,7 @@ class Player {
     encodedIp: string;
 
     constructor(
-        public socket: WSContext<SocketData>,
+        public socket: Socket,
         public teamMenu: TeamMenu,
         public userId: string | null,
         public ip: string,
@@ -354,6 +352,9 @@ export class TeamMenu {
 
     playersByIp = new Map<string, Set<Player>>();
 
+    /** by socket id */
+    players = new Map<string, Player>();
+
     /** open team menu sockets, one per player */
     get socketCount(): number {
         let n = 0;
@@ -396,21 +397,22 @@ export class TeamMenu {
             });
     }
 
-    readonly router = this.createRouter();
+    readonly routes = this.createRoutes();
 
-    private createRouter() {
+    private createRoutes() {
         const teamMenu = this;
 
         const httpRateLimit = new HTTPRateLimit(5, 2000);
         const wsRateLimit = new WebSocketRateLimit(50, 1000, 5);
 
-        return new Hono().get(
-            "/team_v2",
-            sessionMiddleware,
-            upgradeWebSocket(async (c) => {
-                const ip = getHonoIp(c, env.PROXY_IP_HEADER);
-
-                const user = c.var.user;
+        return new Elysia()
+            // longer messages close the socket
+            .use(websocket({ maxPayloadLength: 1024 }))
+            .use(session)
+            .guard({ session: true })
+            // runs once per socket, before the upgrade. what it returns is on `ws` in every handler
+            .derive(async ({ request, server, user }) => {
+                const ip = getIp(request, server);
                 const userId = user && !user.banned ? user.id : null;
 
                 let closeReason: TeamMenuErrorType | undefined;
@@ -424,73 +426,46 @@ export class TeamMenu {
 
                 if (ip) wsRateLimit.ipConnected(ip);
 
-                // hono/bun creates a new WSContext for every event,
-                // so keep the one from onOpen to persist the data stored in `raw`
-                let socket: WSContext<SocketData>;
+                return { ip, userId, closeReason, rateLimit: {} as Record<symbol, number> };
+            })
+            .ws("/team_v2", {
+                open(ws) {
+                    if (ws.closeReason) {
+                        ws.send(
+                            JSON.stringify({ type: "error", data: { type: ws.closeReason } } satisfies TeamErrorMsg),
+                        );
+                        teamMenu.logger.info("team.socket_rejected", { reason: ws.closeReason });
+                        ws.close();
+                        return;
+                    }
+                    teamMenu.onOpen(ws.id, ws, ws.userId, ws.ip!);
+                },
 
-                return {
-                    onOpen(_event, ws) {
-                        socket = ws as WSContext<SocketData>;
-                        ws.raw = {
-                            ip,
-                            rateLimit: {},
-                            player: undefined,
-                        };
+                message(ws, data) {
+                    if (wsRateLimit.isRateLimited(ws.rateLimit)) {
+                        teamMenu.logger.info("team.rate_limited");
+                        ws.close();
+                        return;
+                    }
 
-                        if (closeReason) {
-                            ws.send(
-                                JSON.stringify(
-                                    {
-                                        type: "error",
-                                        data: {
-                                            type: closeReason as TeamMenuErrorType,
-                                        },
-                                    } satisfies TeamErrorMsg,
-                                ),
-                            );
-                            teamMenu.logger.info("team.socket_rejected", { reason: closeReason });
-                            ws.close();
-                            return;
-                        }
-                        teamMenu.onOpen(ws as WSContext<SocketData>, userId, ip!);
-                    },
+                    try {
+                        teamMenu.onMsg(ws.id, ws, data);
+                    } catch (err) {
+                        teamMenu.logger.error("team.message_failed", { err });
+                        ws.close();
+                    }
+                },
 
-                    onMessage(event, _ws) {
-                        const ws = socket;
-                        const data = ws.raw! as SocketData;
-
-                        if (wsRateLimit.isRateLimited(data.rateLimit)) {
-                            teamMenu.logger.info("team.rate_limited");
-                            ws.close();
-                            return;
-                        }
-
-                        try {
-                            teamMenu.onMsg(
-                                ws as WSContext<SocketData>,
-                                event.data as string,
-                            );
-                        } catch (err) {
-                            teamMenu.logger.error("team.message_failed", { err });
-                            ws.close();
-                        }
-                    },
-
-                    onClose(_event, _ws) {
-                        const ws = socket;
-                        teamMenu.onClose(ws as WSContext<SocketData>);
-
-                        const data = ws.raw! as SocketData;
-                        wsRateLimit.ipDisconnected(data.ip);
-                    },
-                };
-            }),
-        );
+                close(ws) {
+                    teamMenu.onClose(ws.id, ws);
+                    if (ws.ip) wsRateLimit.ipDisconnected(ws.ip);
+                },
+            });
     }
 
-    onOpen(ws: WSContext<SocketData>, userId: string | null, ip: string) {
-        const player = new Player(ws, this, userId, ip);
-        ws.raw!.player = player;
+    onOpen(socketId: string, socket: Socket, userId: string | null, ip: string) {
+        const player = new Player(socket, this, userId, ip);
+        this.players.set(socketId, player);
 
         let players = this.playersByIp.get(player.encodedIp);
         if (!players) {
@@ -500,22 +475,21 @@ export class TeamMenu {
         players.add(player);
     }
 
-    onMsg(ws: WSContext<SocketData>, data: string) {
-        let msg: ClientToServerTeamMsg;
-        try {
-            assert(data.length < 1024);
-            msg = zTeamClientMsg.parse(JSON.parse(data));
-        } catch (e) {
-            this.logger.info("team.bad_message", { err: e });
-            ws.close();
+    /** `data` is the message, already JSON.parse'd when it is json */
+    onMsg(socketId: string, socket: Socket, data: unknown) {
+        const parsed = zTeamClientMsg.safeParse(data);
+        if (!parsed.success) {
+            this.logger.info("team.bad_message", { err: parsed.error });
+            socket.close();
             return;
         }
+        const msg: ClientToServerTeamMsg = parsed.data;
 
-        const player = ws.raw?.player;
+        const player = this.players.get(socketId);
         // i really don't think this is necessary but /shrug
         if (!player) {
             this.logger.warning("team.player_not_found");
-            ws.close();
+            socket.close();
             return;
         }
 
@@ -560,7 +534,7 @@ export class TeamMenu {
         // so close the socket
         if (!player.room) {
             this.logger.debug("team.player_not_in_room");
-            ws.close();
+            socket.close();
             return;
         }
 
@@ -568,14 +542,15 @@ export class TeamMenu {
         player.room.onMsg(player, msg);
     }
 
-    onClose(ws: WSContext<SocketData>) {
-        const player = ws.raw?.player;
+    onClose(socketId: string, socket: Socket) {
+        const player = this.players.get(socketId);
 
         if (!player) {
             this.logger.debug("team.player_not_found_on_close");
-            ws.close();
+            socket.close();
             return;
         }
+        this.players.delete(socketId);
 
         const byIp = this.playersByIp.get(player.encodedIp);
         if (byIp) {

@@ -94,18 +94,9 @@ function stopGame() {
 //
 
 async function saveGame(gameId: string, values: SaveGameBody["matchData"]) {
-    let res: Pick<Response, "ok"> | undefined = undefined;
-    try {
-        res = await apiPrivateRouter.save_game.$post({
-            json: {
-                matchData: values,
-            },
-        });
-    } catch (err) {
-        procLogger.error("game.save_failed", { gameId, err });
-    }
-
-    if (!res || !res.ok) {
+    const { error } = await apiPrivateRouter.save_game.post({ matchData: values });
+    if (error) {
+        procLogger.error("game.save_failed", { gameId, err: error });
         procLogger.error("game.save_fallback_local", { gameId });
 
         try {
@@ -118,19 +109,11 @@ async function saveGame(gameId: string, values: SaveGameBody["matchData"]) {
 }
 
 async function sendQuestProgress(userId: string, progress: Array<{ id: string; delta: number }>) {
-    try {
-        const req = await apiPrivateRouter.quest_progress.$post({
-            json: {
-                userId,
-                progress,
-            },
-        });
-        const res = await req.json();
-        if (!req.ok || !(res as { success: boolean }).success) {
-            procLogger.error("quest.progress_failed", { userId, status: req.status, res });
-        }
-    } catch (err) {
-        procLogger.error("quest.progress_failed", { userId, err });
+    const { data, error, status } = await apiPrivateRouter.quest_progress.post({ userId, progress });
+    if (error) {
+        procLogger.error("quest.progress_failed", { userId, status, err: error });
+    } else if (!data.success) {
+        procLogger.error("quest.progress_failed", { userId, status, res: data });
     }
 }
 

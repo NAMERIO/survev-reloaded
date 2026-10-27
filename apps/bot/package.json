@@ -10,12 +10,12 @@
     "register-commands": "bun --env-file=../../.env src/register-commands.ts"
   },
   "dependencies": {
+    "@elysia/eden": "2.0.0-rc.0",
     "@survev/config": "workspace:*",
     "@survev/logger": "workspace:*",
     "@survev/contracts": "workspace:*",
     "@survev/shared": "workspace:*",
     "discord.js": "^14.27.0",
-    "hono": "^4.13.8",
     "zod": "^4.6.5"
   },
   "devDependencies": {

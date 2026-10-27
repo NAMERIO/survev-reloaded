@@ -1,19 +1,14 @@
 import type { TeamMode } from "@survev/shared/gameConfig.ts";
 import { ALL_TEAM_MODES, type MatchHistoryResponse, zMatchHistoryRequest } from "@survev/shared/types/stats.ts";
 import { util } from "@survev/shared/utils/util.ts";
-import { Hono } from "hono";
+import { Elysia } from "elysia";
 import { db } from "../db/index.ts";
 import { query, respond } from "../lib/errors.ts";
-import { validateParams } from "../lib/middleware.ts";
 
-export const matchHistoryRouter = new Hono();
-
-matchHistoryRouter.post(
-    "/",
-    validateParams(zMatchHistoryRequest),
-    async (c) => {
-        const { slug, offset, teamModeFilter } = c.req.valid("json");
-
+export const matchHistoryRoutes = new Elysia().post(
+    "/match_history",
+    { body: zMatchHistoryRequest },
+    async ({ body: { slug, offset, teamModeFilter } }) => {
         const user = await query(() =>
             db.query.users.findFirst({
                 where: { slug },
@@ -51,6 +46,6 @@ matchHistoryRouter.post(
             })) ?? {}
         );
 
-        return respond<MatchHistoryResponse | Record<string, never>>(c, data);
+        return respond<MatchHistoryResponse | Record<string, never>>(data);
     },
 );

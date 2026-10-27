@@ -1,19 +1,14 @@
 import { type MatchDataResponse, zMatchDataRequest } from "@survev/shared/types/stats.ts";
 import { asc, eq } from "drizzle-orm";
-import { Hono } from "hono";
+import { Elysia } from "elysia";
 import { db } from "../db/index.ts";
 import { matchData, users } from "../db/schema.ts";
 import { query, respond } from "../lib/errors.ts";
-import { validateParams } from "../lib/middleware.ts";
 
-export const matchDataRouter = new Hono();
-
-matchDataRouter.post(
-    "/",
-    validateParams(zMatchDataRequest),
-    async (c) => {
-        const { gameId } = c.req.valid("json");
-
+export const matchDataRoutes = new Elysia().post(
+    "/match_data",
+    { body: zMatchDataRequest },
+    async ({ body: { gameId } }) => {
         const result = await query(() =>
             db
                 .select({
@@ -37,6 +32,6 @@ matchDataRouter.post(
                 .where(eq(matchData.gameId, gameId))
         );
 
-        return respond<MatchDataResponse>(c, result);
+        return respond<MatchDataResponse>(result);
     },
 );

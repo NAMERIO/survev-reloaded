@@ -1,4 +1,4 @@
-import type { ModRouterSpectateGameRes, SpectateGamePrivateRes } from "@survev/contracts";
+import type { ModRouterSpectateGameRes, SpectateGamePrivateBody, SpectateGamePrivateRes } from "@survev/contracts";
 import { activePassType } from "@survev/shared/defs/gameObjects/passDefs.ts";
 import { GameConfig } from "@survev/shared/gameConfig.ts";
 import {
@@ -20,8 +20,7 @@ import { validateUserName } from "@survev/shared/utils/badWords.ts";
 import { util } from "@survev/shared/utils/util.ts";
 import { Result } from "better-result";
 import { and, eq } from "drizzle-orm";
-import { Hono } from "hono";
-import { streamText } from "hono/streaming";
+import { Elysia } from "elysia";
 import { z } from "zod";
 import { db } from "../db/index.ts";
 import { items, matchData, userPasses, users } from "../db/schema.ts";
@@ -29,7 +28,6 @@ import { regionFetch, regionIds } from "../game/regions.ts";
 import { teamMenu } from "../game/teamMenu.ts";
 import { Conflict, InvalidParams, NotFound, query, queryOne, respond } from "../lib/errors.ts";
 import { isBehindProxy } from "../lib/ip.ts";
-import { validateParams } from "../lib/middleware.ts";
 import { incrementPassXp } from "../pass/xp.ts";
 import { sanitizeSlug } from "../user/users.ts";
 import { banAccount, banInfo, banIps, findIpBan, hashIp, revokeBans, unbanAccount } from "./bans.ts";
@@ -48,8 +46,8 @@ function ipBanLength(permanent: boolean, days: number) {
     return permanent ? "permanently" : `for ${days} days`;
 }
 
-const moderationRoutes = new Hono()
-    .post("/ban_account", validateParams(zBanAccountParams), async (c) => {
+const moderationRoutes = new Elysia({ prefix: "/moderation" })
+    .post("/ban_account", { body: zBanAccountParams }, async ({ body }) => {
         const {
             slug,
             ban_reason: reason,
@@ -57,10 +55,9 @@ const moderationRoutes = new Hono()
             ban_associated_ips,
             ip_ban_duration,
             ip_ban_permanent,
-        } = c.req.valid("json");
+        } = body;
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const user = yield* Result.await(queryOne(
                     () =>
@@ -101,11 +98,10 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("/unban_account", validateParams(zUnbanAccountParams), async (c) => {
-        const { slug } = c.req.valid("json");
+    .post("/unban_account", { body: zUnbanAccountParams }, async ({ body }) => {
+        const { slug } = body;
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const user = yield* Result.await(userIdBySlug(slug));
                 if (!user.banned) {
@@ -116,7 +112,7 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("/ban_ip", validateParams(zBanIpParams), async (c) => {
+    .post("/ban_ip", { body: zBanIpParams }, async ({ body }) => {
         const {
             ips,
             is_encoded,
@@ -125,12 +121,11 @@ const moderationRoutes = new Hono()
             ip_ban_duration,
             ban_reason: reason,
             executor_id: bannedBy,
-        } = c.req.valid("json");
+        } = body;
 
         const ipHashes = is_encoded ? ips : ips.map(hashIp);
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 // every not-yet-banned account seen on one of these IPs
                 const seen = ban_associated_account
@@ -180,12 +175,11 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("/unban_ip", validateParams(zUnbanIpParams), async (c) => {
-        const { ip, is_encoded } = c.req.valid("json");
+    .post("/unban_ip", { body: zUnbanIpParams }, async ({ body }) => {
+        const { ip, is_encoded } = body;
         const ipHash = is_encoded ? ip : hashIp(ip);
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const revoked = yield* Result.await(
                     query(() => db.transaction((tx) => revokeBans(tx, "ip", [ipHash], "admin"))),
@@ -197,11 +191,10 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("/get_player_ip", validateParams(zGetPlayerIpParams), async (c) => {
-        const { name, use_account_slug, game_id } = c.req.valid("json");
+    .post("/get_player_ip", { body: zGetPlayerIpParams }, async ({ body }) => {
+        const { name, use_account_slug, game_id } = body;
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const rows = yield* Result.await(query(() =>
                     db.query.playerIps.findMany({
@@ -256,28 +249,25 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("/clear_all_bans", async (c) => {
+    .post("/clear_all_bans", async () => {
         const revoked = await query(() => db.transaction((tx) => revokeBans(tx, "ip", undefined, "admin")));
-        return respond(c, revoked.map((count) => ({ message: `All IP bans have been cleared (${count}).` })));
+        return respond(revoked.map((count) => ({ message: `All IP bans have been cleared (${count}).` })));
     })
     .post(
         // useful for purging bad names from leaderboards
         "/set_match_data_name",
-        validateParams(zSetMatchDataNameParams),
-        async (c) => {
-            const { current_name, new_name } = c.req.valid("json");
-
+        { body: zSetMatchDataNameParams },
+        async ({ body: { current_name, new_name } }) => {
             const res = await query(() =>
                 db.update(matchData).set({ username: new_name }).where(eq(matchData.username, current_name))
             );
-            return respond(c, res.map((res) => ({ message: `Updated ${res.count} rows` })));
+            return respond(res.map((res) => ({ message: `Updated ${res.count} rows` })));
         },
     )
-    .post("/set_account_name", validateParams(zSetAccountNameParams), async (c) => {
-        const { new_name, current_slug } = c.req.valid("json");
+    .post("/set_account_name", { body: zSetAccountNameParams }, async ({ body }) => {
+        const { new_name, current_slug } = body;
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const sanitized = validateUserName(new_name);
                 if (sanitized.originalWasInvalid) {
@@ -300,24 +290,20 @@ const moderationRoutes = new Hono()
     })
     .post(
         "/delete_game",
-        validateParams(
-            z.object({
+        {
+            body: z.object({
                 gameId: z.string(),
             }),
-        ),
-        async (c) => {
-            const { gameId } = c.req.valid("json");
-
+        },
+        async ({ body: { gameId } }) => {
             const res = await query(() => db.delete(matchData).where(eq(matchData.gameId, gameId)));
-            return respond(c, res.map((res) => ({ message: `Deleted ${res.count} rows` })));
+            return respond(res.map((res) => ({ message: `Deleted ${res.count} rows` })));
         },
     )
     .post(
-        "find_discord_user_slug",
-        validateParams(zFindDiscordUserSlugParams),
-        async (c) => {
-            const { discord_user } = c.req.valid("json");
-
+        "/find_discord_user_slug",
+        { body: zFindDiscordUserSlugParams },
+        async ({ body: { discord_user } }) => {
             const account = await queryOne(
                 () =>
                     db.query.accounts.findFirst({
@@ -327,16 +313,15 @@ const moderationRoutes = new Hono()
                     }),
                 "User not found",
             );
-            return respond(c, account.map(({ user }) => ({ message: `slug: ${user.slug}` })));
+            return respond(account.map(({ user }) => ({ message: `slug: ${user.slug}` })));
         },
     )
-    .post("reset_pass", validateParams(zResetPassParams), async (c) => {
-        const { slug, pass } = c.req.valid("json");
+    .post("/reset_pass", { body: zResetPassParams }, async ({ body }) => {
+        const { slug, pass } = body;
         // default to the active pass
         const passType = pass || activePassType;
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const user = yield* Result.await(userIdBySlug(slug));
 
@@ -356,11 +341,10 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("give_xp", validateParams(zGiveXpParams), async (c) => {
-        const { slug, xp } = c.req.valid("json");
+    .post("/give_xp", { body: zGiveXpParams }, async ({ body }) => {
+        const { slug, xp } = body;
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const user = yield* Result.await(userIdBySlug(slug));
                 yield* Result.await(query(() => db.transaction((tx) => incrementPassXp(tx, user.id, xp))));
@@ -368,11 +352,10 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("logout_from_game", validateParams(zLogoutFromGameParams), async (c) => {
-        const { slug, game_id } = c.req.valid("json");
+    .post("/logout_from_game", { body: zLogoutFromGameParams }, async ({ body }) => {
+        const { slug, game_id } = body;
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const user = yield* Result.await(userIdBySlug(slug));
 
@@ -390,11 +373,10 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("reset_stats", validateParams(zResetStatsParams), async (c) => {
-        const { slug } = c.req.valid("json");
+    .post("/reset_stats", { body: zResetStatsParams }, async ({ body }) => {
+        const { slug } = body;
 
         return respond(
-            c,
             await Result.gen(async function*() {
                 const user = yield* Result.await(userIdBySlug(slug));
 
@@ -408,54 +390,62 @@ const moderationRoutes = new Hono()
             }),
         );
     })
-    .post("spectate_player", validateParams(zSpectateGameParams), async (c) => {
-        const { filter } = c.req.valid("json");
+    .post("/spectate_player", { body: zSpectateGameParams }, async ({ body, set }) => {
+        const { filter } = body;
 
         if (filter.type === "user_id") {
             // convert the slug to user id
             const user = await userIdBySlug(filter.value);
-            if (user.isErr()) return respond(c, user);
+            if (user.isErr()) return user.error;
             filter.value = user.value.id;
         }
 
-        return streamText(c, async (stream) => {
-            const ids = regionIds();
-            let requestsDone = 0;
-
-            await Promise.all(ids.map(async (regionId) => {
-                const res = await regionFetch<SpectateGamePrivateRes>(regionId, "api/spectate_game", { filter });
-                requestsDone++;
-                await stream.writeln(JSON.stringify(
-                    {
-                        region: regionId,
-                        done: requestsDone === ids.length,
-                        ...res.unwrapOr({ players: [] }),
-                    } satisfies ModRouterSpectateGameRes,
-                ));
-            }));
-            await stream.close();
-        });
+        set.headers["content-type"] = "text/plain; charset=UTF-8";
+        set.headers["x-content-type-options"] = "nosniff";
+        return spectateRegions(filter);
     });
 
+/** one json line per region, in the order they answer */
+async function* spectateRegions(filter: SpectateGamePrivateBody["filter"]) {
+    const pending = new Map(
+        regionIds().map((regionId) => [
+            regionId,
+            regionFetch<SpectateGamePrivateRes>(regionId, "api/spectate_game", { filter }).then((res) => ({
+                regionId,
+                res,
+            })),
+        ]),
+    );
+
+    while (pending.size) {
+        const { regionId, res } = await Promise.race(pending.values());
+        pending.delete(regionId);
+        const line: ModRouterSpectateGameRes = {
+            region: regionId,
+            done: pending.size === 0,
+            ...res.unwrapOr({ players: [] }),
+        };
+        yield `${JSON.stringify(line)}\n`;
+    }
+}
+
 /** /private/check_ip is called by the game server, /private/moderation/* by the discord bot */
-export const ModerationPrivateRouter = new Hono()
+export const ModerationPrivateRoutes = new Elysia()
     .post(
         "/check_ip",
-        validateParams(
-            z.object({
+        {
+            body: z.object({
                 ip: z.string(),
             }),
-        ),
-        async (c) => {
-            const { ip } = c.req.valid("json");
-
+        },
+        async ({ body: { ip } }) => {
             const ban = await findIpBan(ip);
             if (ban) {
-                return c.json({ banned: true, banData: banInfo(ban), behindProxy: false });
+                return { banned: true, banData: banInfo(ban), behindProxy: false };
             }
 
             const behindProxy = await isBehindProxy(ip, false);
-            return c.json({ banned: false, banData: undefined, behindProxy });
+            return { banned: false, banData: undefined, behindProxy };
         },
     )
-    .route("/moderation", moderationRoutes);
+    .use(moderationRoutes);

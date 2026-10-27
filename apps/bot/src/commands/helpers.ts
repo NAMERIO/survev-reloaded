@@ -5,7 +5,7 @@ import {
     SlashCommandBuilder,
 } from "discord.js";
 import type z from "zod";
-import { apiMessage, botLogger, type Command, honoClient, isAdmin } from "../utils.ts";
+import { apiClient, apiMessage, botLogger, type Command, isAdmin } from "../utils.ts";
 
 export function createCommand<T extends z.ZodSchema = z.ZodSchema>(config: {
     name: Command;
@@ -63,11 +63,9 @@ export async function genericExecute<N extends Exclude<Command, "search_player">
     }
 
     // @ts-expect-error - we don't care at this point
-    const route = isPrivateRoute ? honoClient[name] : honoClient.moderation[name];
-    const res = await route.$post({
-        json: args.data as any,
-    });
-    await interaction.editReply(await apiMessage(res));
+    const route = isPrivateRoute ? apiClient[name] : apiClient.moderation[name];
+    const res = await route.post(args.data as any);
+    await interaction.editReply(apiMessage(res));
 }
 
 export function createSlashCommand(config: ReturnType<typeof createCommand>) {

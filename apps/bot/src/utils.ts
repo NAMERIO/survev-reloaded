@@ -1,3 +1,4 @@
+import { treaty } from "@elysia/eden";
 import type { PrivateRouteApp } from "@survev/api/types";
 import { sharedEnv } from "@survev/config/env.ts";
 import { getLogger } from "@survev/logger/node.ts";
@@ -10,7 +11,6 @@ import type {
     StringSelectMenuInteraction,
 } from "discord.js";
 import { MessageFlags, PermissionFlagsBits } from "discord.js";
-import { hc } from "hono/client";
 import { env } from "./env.ts";
 
 // we love enums
@@ -35,11 +35,11 @@ export const enum Command {
     ClearCache = "clear_cache",
 }
 
-export const honoClient = hc<PrivateRouteApp>(`${env.API_URL}/private`, {
+export const apiClient = treaty<PrivateRouteApp>(env.API_URL, {
     headers: {
         "survev-api-key": sharedEnv.SURVEV_API_KEY,
     },
-});
+}).private;
 
 export function isAdmin(interaction: Interaction) {
     if (interaction.guild?.id !== env.DISCORD_GUILD_ID) {
@@ -122,7 +122,7 @@ export function createCollector<
 export const botLogger = getLogger(["bot"]);
 
 /** every API reply, ok or error, carries a message; fall back for non json errors (proxies, crashes) */
-export async function apiMessage(res: Pick<Response, "json" | "status">): Promise<string> {
-    const body = (await res.json().catch(() => undefined)) as { message?: unknown } | undefined;
+export function apiMessage(res: { data: unknown; error: { value: unknown } | null; status: number }): string {
+    const body = (res.error ? res.error.value : res.data) as { message?: unknown } | null;
     return typeof body?.message === "string" ? body.message : `Request failed (${res.status})`;
 }

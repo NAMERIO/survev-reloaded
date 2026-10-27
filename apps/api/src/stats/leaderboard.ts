@@ -2,16 +2,13 @@ import { getLogger } from "@survev/logger/node.ts";
 import { MapId, TeamMode } from "@survev/shared/gameConfig.ts";
 import { type LeaderboardRequest, type LeaderboardResponse, zLeaderboardsRequest } from "@survev/shared/types/stats.ts";
 import { and, count, eq, gte, inArray, ne, type SQL, sql } from "drizzle-orm";
-import { Hono } from "hono";
+import { Elysia } from "elysia";
 import { db } from "../db/index.ts";
 import { matchData, users } from "../db/schema.ts";
 import { query, respond } from "../lib/errors.ts";
-import { validateParams } from "../lib/middleware.ts";
 import { cache, LEADERBOARD_SIZE, leaderboardKey, leaderboardTtl } from "./cache.ts";
 
 const logger = getLogger(["api", "leaderboard"]);
-
-export const leaderboardRouter = new Hono();
 
 const MinGames = {
     kpg: {
@@ -21,11 +18,10 @@ const MinGames = {
     },
 } as Record<LeaderboardRequest["type"], Record<LeaderboardRequest["interval"], number>>;
 
-leaderboardRouter.post(
-    "/",
-    validateParams(zLeaderboardsRequest),
-    async (c) => {
-        const params = c.req.valid("json");
+export const leaderboardRoutes = new Elysia().post(
+    "/leaderboard",
+    { body: zLeaderboardsRequest },
+    async ({ body: params }) => {
         const data = await query(() =>
             cache.cached(
                 leaderboardKey(params),
@@ -36,7 +32,7 @@ leaderboardRouter.post(
             )
         );
 
-        return respond<LeaderboardResponse[]>(c, data);
+        return respond<LeaderboardResponse[]>(data);
     },
 );
 

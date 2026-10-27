@@ -1,13 +1,10 @@
+import type { Treaty } from "@elysia/eden";
 import { type ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
-import type { InferResponseType } from "hono";
 import { createDiscordDropdownUI } from "../components.ts";
-import { botLogger, Command, hasBotPermission, honoClient } from "../utils.ts";
+import { apiClient, apiMessage, botLogger, Command, hasBotPermission } from "../utils.ts";
 import { sendNoPermissionMessage } from "./helpers.ts";
 
-export type SelectedPlayer = Extract<
-    InferResponseType<typeof honoClient.moderation.get_player_ip.$post, 200>,
-    any[]
->[number];
+export type SelectedPlayer = Treaty.Data<typeof apiClient.moderation.get_player_ip.post>[number];
 
 export const BUTTON_PREFIXES = {
     BAN_FOR_CHEATING: `search_player_ban_for_cheating_`,
@@ -52,25 +49,21 @@ export const searchPlayersHandler = {
         }
 
         try {
-            const res = await honoClient.moderation.get_player_ip.$post({
-                json: {
-                    name: searchName!,
-                    use_account_slug: useSlug,
-                    game_id: gameId,
-                },
+            const res = await apiClient.moderation.get_player_ip.post({
+                name: searchName!,
+                use_account_slug: useSlug,
+                game_id: gameId,
             });
 
-            const result = await res.json();
-
             // no player found (or any other error), return message formatted by the api
-            if (!Array.isArray(result)) {
+            if (res.error) {
                 await interaction.editReply({
-                    content: result.message,
+                    content: apiMessage(res),
                 });
                 return;
             }
 
-            const matchingPlayers = result;
+            const matchingPlayers = res.data;
 
             await createDiscordDropdownUI(interaction, matchingPlayers, searchName);
         } catch (error) {
