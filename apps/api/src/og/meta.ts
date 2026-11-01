@@ -5,38 +5,40 @@ export interface PageMeta {
     url: string;
 }
 
-function escapeHtml(text: string) {
-    return text
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll("\"", "&quot;");
-}
-
-const OLD_TAGS = /<meta\b[^>]*\b(?:property|name)="(?:og|twitter):[^"]*"[^>]*>\s*/g;
-const OLD_TITLE = /<title>[\s\S]*?<\/title>\s*/;
+const isPreviewTag = (name: string | null) => name?.startsWith("og:") || name?.startsWith("twitter:");
 
 /** swaps the page's preview tags for this link's. `base` is for pages served away from their usual path */
 export function injectMeta(html: string, meta: PageMeta, options: { base?: string } = {}) {
-    const [title, description, image, url] = [meta.title, meta.description, meta.image, meta.url].map(escapeHtml);
+    const { title, description, image, url } = meta;
     const tags = [
-        options.base ? `<base href="${escapeHtml(options.base)}">` : "",
-        `<title>${title}</title>`,
-        `<meta property="og:type" content="website">`,
-        `<meta property="og:site_name" content="survev.io">`,
-        `<meta property="og:title" content="${title}">`,
-        `<meta property="og:description" content="${description}">`,
-        `<meta property="og:url" content="${url}">`,
-        `<meta property="og:image" content="${image}">`,
-        `<meta property="og:image:width" content="1200">`,
-        `<meta property="og:image:height" content="630">`,
-        `<meta name="twitter:card" content="summary_large_image">`,
-        `<meta name="twitter:title" content="${title}">`,
-        `<meta name="twitter:description" content="${description}">`,
-        `<meta name="twitter:image" content="${image}">`,
-    ].filter(Boolean).join("\n");
-    const cleaned = html.replace(OLD_TAGS, "").replace(OLD_TITLE, "");
-    // base has to come before anything with a relative url
-    if (options.base) return cleaned.replace(/<head>/, `<head>\n${tags}`);
-    return cleaned.replace("</head>", `${tags}\n</head>`);
+        ["property", "og:type", "website"],
+        ["property", "og:site_name", "survev.io"],
+        ["property", "og:title", title],
+        ["property", "og:description", description],
+        ["property", "og:url", url],
+        ["property", "og:image", image],
+        ["property", "og:image:width", "1200"],
+        ["property", "og:image:height", "630"],
+        ["name", "twitter:card", "summary_large_image"],
+        ["name", "twitter:title", title],
+        ["name", "twitter:description", description],
+        ["name", "twitter:image", image],
+    ].map(([attr, name, content]) => `<meta ${attr}="${name}" content="${Bun.escapeHTML(content)}">`);
+
+    const head = [
+        // base has to come before anything with a relative url
+        options.base ? `<base href="${Bun.escapeHTML(options.base)}">` : "",
+        `<title>${Bun.escapeHTML(title)}</title>`,
+        ...tags,
+    ].join("\n");
+
+    return new HTMLRewriter()
+        .on("title", { element: (el) => void el.remove() })
+        .on("meta", {
+            element(el) {
+                if (isPreviewTag(el.getAttribute("property") ?? el.getAttribute("name"))) el.remove();
+            },
+        })
+        .on("head", { element: (el) => void el.prepend(head, { html: true }) })
+        .transform(html);
 }
