@@ -3,27 +3,30 @@ import type { MapId } from "@survev/shared/gameConfig.ts";
 import { TeamMode } from "@survev/shared/gameConfig.ts";
 import { CardFrame, PlayerSprite, SHADOW, SOFT, YELLOW } from "./cardFrame.tsx";
 import { fitFontSize } from "./fit.ts";
-import { TEAM_MODE_LABELS } from "./leaderboardCard.tsx";
+import { teamModeLabel } from "./labels.ts";
 import { mapArt } from "./maps.ts";
-import { assetDataUrl } from "./render.ts";
 
-const SECOND_SKIN = "img/player/player-base-outfitSpetsnaz.svg";
 const SPRITE_SIZE = 56;
 
 export async function teamCard(props: {
     code: string;
     players: string[];
-    maxPlayers: number;
+    teamMode: TeamMode;
     region: string;
     mapId: MapId;
 }) {
-    const { code, players, maxPlayers, region, mapId } = props;
+    const { code, players, teamMode, region, mapId } = props;
     const leader = players[0];
-    const full = players.length >= maxPlayers;
-    const mode = TEAM_MODE_LABELS[maxPlayers === TeamMode.Duo ? TeamMode.Duo : TeamMode.Squad];
-    const rowHeight = maxPlayers === TeamMode.Duo ? 96 : 76;
+    const full = players.length >= teamMode;
+    const mode = teamModeLabel(teamMode);
+    const rowHeight = teamMode === TeamMode.Duo ? 96 : 76;
     const spriteTop = (rowHeight - SPRITE_SIZE) / 2;
-    const skin = await assetDataUrl(SECOND_SKIN);
+
+    const sprites = await Promise.all(
+        players.map((_, i) =>
+            PlayerSprite({ x: 8, y: spriteTop, size: SPRITE_SIZE, outfit: i ? "outfitSpetsnaz" : "outfitBase" })
+        ),
+    );
 
     return CardFrame({
         art: mapArt(mapId),
@@ -55,7 +58,7 @@ export async function teamCard(props: {
                     </span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column" }}>
-                    {Array.from({ length: maxPlayers }, (_, i) => {
+                    {Array.from({ length: teamMode }, (_, i) => {
                         const name = players[i];
                         const next = i === players.length;
                         const color = name ? "#fff" : next ? YELLOW : "rgba(255,255,255,.65)";
@@ -75,15 +78,7 @@ export async function teamCard(props: {
                                 }}
                             >
                                 {name
-                                    ? (
-                                        <PlayerSprite
-                                            x={8}
-                                            y={spriteTop}
-                                            size={SPRITE_SIZE}
-                                            alt={i > 0}
-                                            skin={i > 0 ? skin : undefined}
-                                        />
-                                    )
+                                    ? sprites[i]
                                     : (
                                         <div
                                             style={{

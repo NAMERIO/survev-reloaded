@@ -12,11 +12,12 @@ import { macros } from "../lib/macros.ts";
 import { getLeaderboard } from "../stats/leaderboard.ts";
 import { getUserStats } from "../stats/userStats.ts";
 import { genericCard } from "./genericCard.tsx";
-import { LEADERBOARD_TITLES, leaderboardCard, TEAM_MODE_LABELS } from "./leaderboardCard.tsx";
+import { intervalLabel, leaderboardTitle, teamModeLabel } from "./labels.ts";
+import { leaderboardCard } from "./leaderboardCard.tsx";
 import { mapArt } from "./maps.ts";
 import { injectMeta, type PageMeta } from "./meta.ts";
 import { parseLeaderboardParams, parsePlayerParams } from "./params.ts";
-import { INTERVAL_LABELS, playerCard } from "./playerCard.tsx";
+import { playerCard } from "./playerCard.tsx";
 import { renderCard } from "./render.ts";
 import { teamCard } from "./teamCard.tsx";
 
@@ -73,8 +74,8 @@ const htmlResponse = (html: string) =>
     new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
 
 function leaderboardMeta(params: LeaderboardRequest, search: string): PageMeta {
-    const mode = TEAM_MODE_LABELS[params.teamMode];
-    const title = `${LEADERBOARD_TITLES[params.type]} · ${mode} · ${INTERVAL_LABELS[params.interval]}`;
+    const mode = teamModeLabel(params.teamMode);
+    const title = `${leaderboardTitle(params.type)} · ${mode} · ${intervalLabel(params.interval)}`;
     return {
         title: `${title} · survev.io`,
         description: `${mapArt(params.mapId).name} leaderboard on survev.io`,
@@ -121,7 +122,7 @@ export const OgRoutes = new Elysia()
             ? teamCard({
                 code,
                 players: room.players,
-                maxPlayers: room.maxPlayers,
+                teamMode: room.maxPlayers,
                 region: room.region,
                 mapId: teamMapId(room.mapName),
             })

@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { env } from "../../src/env.ts";
 import { fitFontSize } from "../../src/og/fit.ts";
 import { genericCard } from "../../src/og/genericCard.tsx";
+import { intervalLabel, leaderboardTitle, teamModeLabel } from "../../src/og/labels.ts";
 import { leaderboardCard } from "../../src/og/leaderboardCard.tsx";
 import { mapArt } from "../../src/og/maps.ts";
 import { playerCard } from "../../src/og/playerCard.tsx";
@@ -26,6 +27,12 @@ const stats = (username: string): UserStatsResponse => ({
 const row = (username: string, val = 62): LeaderboardResponse => ({ val, region: "na", slug: "x", username });
 const team = { code: "qk4z", region: "na", mapId: MapId.Desert };
 const params = { type: "most_kills", teamMode: TeamMode.Solo, interval: "daily", mapId: MapId.Main } as const;
+
+test("labels use the stats page's words", () => {
+    expect(leaderboardTitle("kpg")).toBe("KILLS PER GAME");
+    expect(intervalLabel("weekly")).toBe("THIS WEEK");
+    expect(teamModeLabel(TeamMode.Duo)).toBe("DUO");
+});
 
 test("every map has art and a name", async () => {
     for (const id of Object.values(MapId)) {
@@ -68,10 +75,13 @@ describe("cards render", () => {
                     params: { ...params, teamMode: TeamMode.Squad },
                 }),
         ],
-        ["team 1/4", () => teamCard({ ...team, players: ["Vektor"], maxPlayers: 4 })],
-        ["team 1/2", () => teamCard({ ...team, players: ["Vektor"], maxPlayers: 2 })],
-        ["team full", () => teamCard({ ...team, players: ["Vektor", "nomad_"], maxPlayers: 2 })],
-        ["team long", () => teamCard({ ...team, players: [WIDE, "MMMMMMMMMMMMMMMM", "影の狙撃手"], maxPlayers: 4 })],
+        ["team 1/4", () => teamCard({ ...team, players: ["Vektor"], teamMode: TeamMode.Squad })],
+        ["team 1/2", () => teamCard({ ...team, players: ["Vektor"], teamMode: TeamMode.Duo })],
+        ["team full", () => teamCard({ ...team, players: ["Vektor", "nomad_"], teamMode: TeamMode.Duo })],
+        [
+            "team long",
+            () => teamCard({ ...team, players: [WIDE, "MMMMMMMMMMMMMMMM", "影の狙撃手"], teamMode: TeamMode.Squad }),
+        ],
     ];
     test.each(cases)("%s", async (_, card) => {
         expect((await renderCard(await card())).byteLength).toBeGreaterThan(5000);

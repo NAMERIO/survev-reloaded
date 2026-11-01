@@ -4,14 +4,9 @@ import { MapId } from "@survev/shared/gameConfig.ts";
 import type { UserStatsRequest, UserStatsResponse } from "@survev/shared/types/stats.ts";
 import { CardFrame, SOFT, YELLOW } from "./cardFrame.tsx";
 import { fitFontSize } from "./fit.ts";
+import { intervalLabel, statLabel } from "./labels.ts";
 import { mapArt } from "./maps.ts";
 import { assetDataUrl } from "./render.ts";
-
-export const INTERVAL_LABELS: Record<UserStatsRequest["interval"], string> = {
-    daily: "TODAY",
-    weekly: "THIS WEEK",
-    alltime: "ALL TIME",
-};
 
 function avatarPath(playerIcon: string) {
     const texture = EmotesDefs[playerIcon]?.texture;
@@ -57,14 +52,19 @@ export async function playerCard(props: {
                         <img src={avatar} style={{ width: 96, height: 96 }} />
                         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             <span style={{ fontSize: fitFontSize(name, 72, 480), lineHeight: 1.1 }}>{name}</span>
-                            <span style={{ fontSize: 26, color: SOFT }}>{INTERVAL_LABELS[interval]}</span>
+                            <span style={{ fontSize: 26, color: SOFT }}>{intervalLabel(interval)}</span>
                         </div>
                     </div>
-                    <Stat value={stats.kills.toLocaleString("en-US")} label="KILLS" size={150} color={YELLOW} />
+                    <Stat
+                        value={stats.kills.toLocaleString("en-US")}
+                        label={statLabel("stats-kills")}
+                        size={150}
+                        color={YELLOW}
+                    />
                     <div style={{ display: "flex", gap: 70 }}>
-                        <Stat value={stats.wins.toLocaleString("en-US")} label="WINS" size={64} />
-                        <Stat value={stats.kpg} label="KPG" size={64} />
-                        <Stat value={stats.games.toLocaleString("en-US")} label="GAMES" size={64} />
+                        <Stat value={stats.wins.toLocaleString("en-US")} label={statLabel("stats-wins")} size={64} />
+                        <Stat value={stats.kpg} label={statLabel("stats-kpg")} size={64} />
+                        <Stat value={stats.games.toLocaleString("en-US")} label={statLabel("stats-games")} size={64} />
                     </div>
                 </div>
             ),

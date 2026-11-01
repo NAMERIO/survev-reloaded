@@ -1,6 +1,9 @@
 /** @jsxImportSource react */
+import { OutfitDefs } from "@survev/shared/defs/gameObjects/outfitDefs.ts";
 import type { ReactNode } from "react";
 import { assetDataUrl, FONT_STACK } from "./render.ts";
+
+type OutfitKey = keyof typeof OutfitDefs;
 
 export const YELLOW = "#ffdb00";
 export const DIM = "#9a9a9a";
@@ -97,12 +100,14 @@ export async function CardFrame(props: {
 }
 
 const OUTLINE = "#111";
+const hexColor = (tint: number) => `#${tint.toString(16).padStart(6, "0")}`;
 
-/** the game's unarmed pose. Hand offsets come from the fists pose in animData.ts */
-export function PlayerSprite(props: { x: number; y: number; size: number; alt: boolean; skin: string | undefined }) {
-    const { x, y, size, alt, skin } = props;
-    const color = alt ? "#cfd8dc" : "#f8c574";
-    const handColor = alt ? "#e6edf0" : "#f8c574";
+/** the game's unarmed pose in an outfit from its defs. Hand offsets come from the fists pose in animData.ts */
+export async function PlayerSprite(props: { x: number; y: number; size: number; outfit: OutfitKey }) {
+    const { x, y, size, outfit } = props;
+    const { baseTint, baseSprite, handTint } = OutfitDefs[outfit].skinImg;
+    const plainBody = outfit === "outfitBase";
+    const skin = plainBody ? undefined : await assetDataUrl(`img/player/${baseSprite.slice(0, -4)}.svg`);
     const line = Math.max(3, size * 0.05);
     const hand = size * 0.34;
     const handStyle = (cx: number, cy: number) => ({
@@ -112,7 +117,7 @@ export function PlayerSprite(props: { x: number; y: number; size: number; alt: b
         width: hand,
         height: hand,
         borderRadius: hand / 2,
-        background: handColor,
+        background: hexColor(handTint),
         border: `${line}px solid ${OUTLINE}`,
     });
     return (
@@ -123,7 +128,7 @@ export function PlayerSprite(props: { x: number; y: number; size: number; alt: b
                 top: y,
                 width: size,
                 height: size,
-                transform: `rotate(${alt ? -60 : 60}deg)`,
+                transform: `rotate(${plainBody ? 60 : -60}deg)`,
             }}
         >
             <div
@@ -131,7 +136,7 @@ export function PlayerSprite(props: { x: number; y: number; size: number; alt: b
                     position: "absolute",
                     inset: 0,
                     borderRadius: size / 2,
-                    background: color,
+                    background: hexColor(baseTint),
                     border: `${line}px solid ${OUTLINE}`,
                     overflow: "hidden",
                 }}

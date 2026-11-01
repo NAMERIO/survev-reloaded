@@ -1,24 +1,9 @@
 /** @jsxImportSource react */
-import { TeamMode } from "@survev/shared/gameConfig.ts";
 import type { LeaderboardRequest, LeaderboardResponse } from "@survev/shared/types/stats.ts";
 import { CardFrame, DIM, SOFT, YELLOW } from "./cardFrame.tsx";
 import { fitFontSize } from "./fit.ts";
+import { intervalLabel, leaderboardTitle, teamModeLabel } from "./labels.ts";
 import { mapArt } from "./maps.ts";
-import { INTERVAL_LABELS } from "./playerCard.tsx";
-
-export const LEADERBOARD_TITLES: Record<LeaderboardRequest["type"], string> = {
-    most_kills: "MOST KILLS",
-    most_damage_dealt: "MOST DAMAGE",
-    kpg: "KILLS PER GAME",
-    kills: "TOTAL KILLS",
-    wins: "TOTAL WINS",
-};
-
-export const TEAM_MODE_LABELS: Record<TeamMode, string> = {
-    [TeamMode.Solo]: "SOLO",
-    [TeamMode.Duo]: "DUO",
-    [TeamMode.Squad]: "SQUAD",
-};
 
 export function rowName(row: LeaderboardResponse) {
     return "usernames" in row ? row.usernames.join(" + ") : row.username;
@@ -30,7 +15,7 @@ function rowValue(row: LeaderboardResponse, type: LeaderboardRequest["type"]) {
 
 export function leaderboardCard(props: { rows: LeaderboardResponse[]; params: LeaderboardRequest }) {
     const { rows, params } = props;
-    const title = LEADERBOARD_TITLES[params.type];
+    const title = leaderboardTitle(params.type);
     return CardFrame({
         art: mapArt(params.mapId),
         showMapName: true,
@@ -53,7 +38,7 @@ export function leaderboardCard(props: { rows: LeaderboardResponse[]; params: Le
                         {title}
                     </span>
                     <span style={{ fontSize: 28, color: SOFT }}>
-                        {TEAM_MODE_LABELS[params.teamMode]} · {INTERVAL_LABELS[params.interval]}
+                        {teamModeLabel(params.teamMode)} · {intervalLabel(params.interval)}
                     </span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column" }}>
