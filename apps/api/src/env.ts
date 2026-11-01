@@ -14,6 +14,8 @@ export const env = parseEnv({
     PUBLIC_URL: z.url().default("http://127.0.0.1:3000"),
     /** where login flows end, an absolute URL when the client is on another subdomain than the API */
     CLIENT_URL: z.string().default("/"),
+    /** the client's built files; preview cards and shared pages read their art and HTML from here */
+    WEB_ROOT: z.string().default(new URL("../../client/public", import.meta.url).pathname),
     /** leaderboards and stats are cached in redis when set */
     REDIS_URL: z.string().optional(),
     SURVEV_IP_SECRET: secret("dev-ip-secret"),

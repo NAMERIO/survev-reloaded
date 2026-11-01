@@ -10,6 +10,8 @@
     "skipLibCheck": true,
     "newLine": "lf",
     "noEmit": true,
+    // the API's cards pick react per file; the client typechecks them through the API's route types
+    "jsx": "react-jsx",
 
     "allowImportingTsExtensions": true,
     "allowJs": true,

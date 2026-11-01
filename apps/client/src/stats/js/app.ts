@@ -1,3 +1,4 @@
+import EnJs from "@survev/shared/l10n/stats.en.json";
 import $ from "jquery";
 // TODO(performance): only load needed bootstrap components
 import "bootstrap";
@@ -11,7 +12,6 @@ import "bootstrap/dist/css/bootstrap.css";
 import "../../../css/stats/app.css";
 import { helpers } from "../../helpers.ts";
 import { Localization } from "../../ui/localization.ts";
-import EnJs from "../en.json";
 
 const templates = {
     language,

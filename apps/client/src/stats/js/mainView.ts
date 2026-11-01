@@ -1,4 +1,5 @@
 import type { LeaderboardRequest } from "@survev/shared/types/stats.ts";
+import { LEADERBOARD_TITLE_KEYS } from "@survev/shared/types/statsLabels.ts";
 import $ from "jquery";
 import { api } from "../../api.ts";
 import { device } from "../../device.ts";
@@ -105,13 +106,8 @@ export class MainView {
     }
     render() {
         // Compute derived values
-        const TypeToString = {
-            most_kills: "stats-most-kills",
-            most_damage_dealt: "stats-most-damage",
-            kills: "stats-total-kills",
-            wins: "stats-total-wins",
-            kpg: "stats-kpg",
-        } satisfies Record<LeaderboardRequest["type"], string>;
+        // the table column is short for kills per game
+        const TypeToString = { ...LEADERBOARD_TITLE_KEYS, kpg: "stats-kpg" };
         let content = "";
         if (this.loading) {
             content = templates.loading({

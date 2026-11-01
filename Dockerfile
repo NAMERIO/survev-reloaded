@@ -25,6 +25,7 @@ COPY apps/server/package.json apps/server/
 COPY packages/config/package.json packages/config/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/game/package.json packages/game/
+COPY packages/logger/package.json packages/logger/
 COPY packages/shared/package.json packages/shared/
 
 FROM manifests AS deps
@@ -36,6 +37,13 @@ COPY . .
 RUN bun run build:api
 RUN bun run build:game
 RUN bun run build:bot
+# the part of takumi the API bundle can't contain, flattened so it resolves from /app/node_modules
+RUN mkdir -p /app/native/@takumi-rs \
+    && set -- /app/node_modules/.bun/@takumi-rs+core@*/node_modules/@takumi-rs/core \
+    && cp -rL "$1" /app/native/@takumi-rs/core \
+    && set -- /app/node_modules/.bun/@takumi-rs+helpers@*/node_modules/@takumi-rs/helpers \
+    && cp -rL "$1" /app/native/@takumi-rs/helpers \
+    && cp -rL /app/node_modules/.bun/@takumi-rs+core-linux-*/node_modules/@takumi-rs/core-linux-* /app/native/@takumi-rs/
 
 # The client gets everything else from the API at runtime, only the public VITE_* values are baked in
 FROM deps AS client-build
@@ -48,6 +56,10 @@ RUN --mount=type=cache,target=/app/apps/client/node_modules/.atlas-cache \
 FROM base AS api
 ENV NODE_ENV=production
 COPY --from=build /app/apps/api/dist /app/apps/api/dist
+COPY --from=build /app/native /app/node_modules
+# preview cards read the map art and fonts, shared links the page HTML
+ENV WEB_ROOT=/app/web
+COPY --from=client-build /app/apps/client/dist /app/web
 WORKDIR /app/apps/api
 USER bun
 EXPOSE 8000

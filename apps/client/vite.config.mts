@@ -49,6 +49,11 @@ export default defineConfig(({ mode }) => {
                 changeOrigin: true,
                 secure: false,
             },
+            "/t/": {
+                target: apiUrl,
+                changeOrigin: true,
+                secure: false,
+            },
             "/api": {
                 target: apiUrl,
                 changeOrigin: true,

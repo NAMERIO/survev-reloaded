@@ -11,6 +11,7 @@ import { type ErrorBody, errorResponse, InvalidParams, isApiError } from "./lib/
 import { macros } from "./lib/macros.ts";
 import { noteRequest, trackRequest } from "./lib/requestLog.ts";
 import { ModerationPrivateRoutes } from "./moderation/privateRoutes.ts";
+import { OgRoutes } from "./og/routes.ts";
 import { PassPrivateRoutes } from "./pass/privateRoutes.ts";
 import { StatsPrivateRoutes } from "./stats/privateRoutes.ts";
 import { StatsRoutes } from "./stats/routes.ts";
@@ -113,6 +114,7 @@ app
     .use(UserRoutes)
     .use(authRoutes)
     .use(StatsRoutes)
+    .use(OgRoutes)
     .use(GameRoutes)
     .use(privateRoutes)
     .use(TeamMenuRoutes)
