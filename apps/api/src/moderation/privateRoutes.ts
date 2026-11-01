@@ -25,7 +25,7 @@ import { z } from "zod";
 import { db } from "../db/index.ts";
 import { items, matchData, userPasses, users } from "../db/schema.ts";
 import { regionFetch, regionIds } from "../game/regions.ts";
-import { teamMenu } from "../game/teamMenu.ts";
+import { teamMenu } from "../game/teamMenu/teamMenu.ts";
 import { Conflict, InvalidParams, NotFound, query, queryOne, respond } from "../lib/errors.ts";
 import { isBehindProxy } from "../lib/ip.ts";
 import { incrementPassXp } from "../pass/xp.ts";

@@ -13,7 +13,7 @@ import { app } from "./app.ts";
 import { db } from "./db/index.ts";
 import { sessions } from "./db/schema.ts";
 import { env } from "./env.ts";
-import { teamMenu } from "./game/teamMenu.ts";
+import { teamMenu } from "./game/teamMenu/teamMenu.ts";
 import { cleanupOldPlayerIps } from "./moderation/bans.ts";
 
 // nothing imported above logs while it loads, so logging can be set up here

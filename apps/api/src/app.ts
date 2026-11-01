@@ -6,7 +6,7 @@ import { AdminPrivateRoutes } from "./admin/privateRoutes.ts";
 import { auth } from "./auth/auth.ts";
 import { GamePrivateRoutes } from "./game/privateRoutes.ts";
 import { GameRoutes } from "./game/routes.ts";
-import { teamMenu } from "./game/teamMenu.ts";
+import { TeamMenuRoutes } from "./game/teamMenu/routes.ts";
 import { type ErrorBody, errorResponse, InvalidParams, isApiError } from "./lib/errors.ts";
 import { macros } from "./lib/macros.ts";
 import { noteRequest, trackRequest } from "./lib/requestLog.ts";
@@ -115,6 +115,6 @@ app
     .use(StatsRoutes)
     .use(GameRoutes)
     .use(privateRoutes)
-    .use(teamMenu.routes)
+    .use(TeamMenuRoutes)
     // HEAD for every GET route, like hono
     .use(autoHead());
