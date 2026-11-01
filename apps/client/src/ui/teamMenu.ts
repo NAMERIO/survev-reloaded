@@ -464,11 +464,8 @@ export class TeamMenu {
                 const roomCode = this.roomData.roomUrl.substring(1);
                 $("#team-code").text(roomCode);
 
-                const url = new URL(window.location.href);
-                url.search = ""; // removes ?t=<timestamp> that is set when the client receives an invalid protocol error
-                url.hash = this.roomData.roomUrl;
-
-                $("#team-url").text(url.toString());
+                // the share link has a path: unlike a hash it reaches the server, which adds the preview card
+                $("#team-url").text(`${window.location.origin}/t/${roomCode}`);
 
                 if (window.history) {
                     window.history.replaceState("", "", this.roomData.roomUrl);

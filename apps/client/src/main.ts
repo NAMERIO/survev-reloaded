@@ -23,6 +23,7 @@ import { InputBinds, InputBindUi } from "./inputBinds.ts";
 import { PingTest } from "./pingTest.ts";
 import { ResourceManager } from "./resources.ts";
 import { SiteInfo } from "./siteInfo.ts";
+import { teamCodeFromPath } from "./teamLink.ts";
 import { LoadoutMenu } from "./ui/loadoutMenu.ts";
 import { Localization } from "./ui/localization.ts";
 import Menu from "./ui/menu.ts";
@@ -924,6 +925,10 @@ export class Application {
         this.input!.flush();
     }
 }
+
+// a shared /t/<code> link: everything after this joins through the hash, as it always has
+const sharedTeamCode = teamCodeFromPath(window.location.pathname);
+if (sharedTeamCode) window.history.replaceState("", "", `/#${sharedTeamCode}`);
 
 const App = new Application();
 
