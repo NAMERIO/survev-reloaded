@@ -5,14 +5,6 @@ import { fitFontSize } from "./fit.ts";
 import { intervalLabel, leaderboardTitle, teamModeLabel } from "./labels.ts";
 import { mapArt } from "./maps.ts";
 
-export function rowName(row: LeaderboardResponse) {
-    return "usernames" in row ? row.usernames.join(" + ") : row.username;
-}
-
-function rowValue(row: LeaderboardResponse, type: LeaderboardRequest["type"]) {
-    return type === "kpg" ? Number(row.val).toFixed(2) : Number(row.val).toLocaleString("en-US");
-}
-
 export function leaderboardCard(props: { rows: LeaderboardResponse[]; params: LeaderboardRequest }) {
     const { rows, params } = props;
     const title = leaderboardTitle(params.type);
@@ -43,7 +35,9 @@ export function leaderboardCard(props: { rows: LeaderboardResponse[]; params: Le
                 </div>
                 <div style={{ display: "flex", flexDirection: "column" }}>
                     {rows.slice(0, 5).map((row, i) => {
-                        const name = rowName(row);
+                        const name = "usernames" in row ? row.usernames.join(" + ") : row.username;
+                        // SUM() comes back from postgres as a string, whatever the query's type says
+                        const value = Number(row.val);
                         const size = i ? 36 : 52;
                         return (
                             <div
@@ -61,7 +55,7 @@ export function leaderboardCard(props: { rows: LeaderboardResponse[]; params: Le
                                 <span style={{ display: "flex", flexGrow: 1, fontSize: fitFontSize(name, size, 400) }}>
                                     {name}
                                 </span>
-                                <span>{rowValue(row, params.type)}</span>
+                                <span>{params.type === "kpg" ? value.toFixed(2) : value.toLocaleString("en-US")}</span>
                             </div>
                         );
                     })}
