@@ -22,19 +22,21 @@ export const leaderboardRoutes = new Elysia().post(
     "/leaderboard",
     { body: zLeaderboardsRequest },
     async ({ body: params }) => {
-        const data = await query(() =>
-            cache.cached(
-                leaderboardKey(params),
-                leaderboardTtl(params.type),
-                () => queryLeaderboard(params),
-                // TODO: decide if we should cache empty results;
-                (data) => data.length != 0,
-            )
-        );
+        const data = await query(() => getLeaderboard(params));
 
         return respond<LeaderboardResponse[]>(data);
     },
 );
+
+export function getLeaderboard(params: LeaderboardRequest) {
+    return cache.cached(
+        leaderboardKey(params),
+        leaderboardTtl(params.type),
+        () => queryLeaderboard(params),
+        // TODO: decide if we should cache empty results;
+        (data) => data.length != 0,
+    );
+}
 
 async function queryLeaderboard(params: LeaderboardRequest) {
     const { type, teamMode, mapId } = params;

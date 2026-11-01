@@ -141,3 +141,7 @@ docker compose -f docker-compose.dev.yml up --build
 
 The client is at http://127.0.0.1:3000 (`SURVEV_DEV_VITE_PORT` changes the host port), and the game server
 uses ports 8001 and 9000-9063 on 127.0.0.1. `docker compose -f docker-compose.dev.yml down -v` resets the database.
+
+## Link previews
+
+Shared links get a preview card rendered by the API: `/stats/?...` and `/t/<code>` go through it (see the `Caddyfile`), and images come from `/api/og/`. The `og:image` URLs are built from `PUBLIC_URL`, so it has to be the site's public address.

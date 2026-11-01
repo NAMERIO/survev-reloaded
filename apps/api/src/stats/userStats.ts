@@ -23,14 +23,16 @@ export const userStatsRoutes = new Elysia().post(
     "/user_stats",
     { body: zUserStatsRequest },
     async ({ body: { interval, mapIdFilter, slug } }) => {
-        const data = await query(async () => {
-            const user = await db.query.users.findFirst({ where: { slug }, columns: { id: true } });
-            return user ? userStatsSqlQuery(user.id, mapIdFilter, interval) : emptyState;
-        });
+        const data = await query(() => getUserStats({ interval, mapIdFilter, slug }));
 
         return respond(data);
     },
 );
+
+export async function getUserStats({ interval, mapIdFilter, slug }: UserStatsRequest): Promise<UserStatsResponse> {
+    const user = await db.query.users.findFirst({ where: { slug }, columns: { id: true } });
+    return user ? userStatsSqlQuery(user.id, mapIdFilter, interval) : emptyState;
+}
 
 const intervalFilter: Record<string, SQL<unknown>> = {
     daily: gte(matchData.createdAt, sql`NOW() - INTERVAL '1 day'`),

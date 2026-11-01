@@ -15,7 +15,15 @@
 	import no_private
 	encode zstd gzip
 
-	@api path /api/* /team_v2
+	# shared links: the API adds their preview tags. The bare /stats/ page stays a file
+	@api path /api/* /team_v2 /t/*
+	@filteredStats {
+		path /stats/
+		expression {http.request.uri.query} != ""
+	}
+	handle @filteredStats {
+		reverse_proxy api:8000
+	}
 	handle @api {
 		# Caddy sets X-Forwarded-For to the client IP (proxyIPHeader in the config)
 		reverse_proxy api:8000

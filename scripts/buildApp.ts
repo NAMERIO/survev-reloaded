@@ -53,7 +53,9 @@ const result = await Bun.build({
     target: "bun",
     format: "esm",
     sourcemap: "linked",
-    // everything is bundled, dist/ runs without node_modules
+    // everything else is bundled, dist/ runs without node_modules.
+    // takumi's native addon can't be: it picks a platform binary at runtime, the Dockerfile provides it
+    external: ["@takumi-rs/core"],
     minify: {
         syntax: true,
         whitespace: false,

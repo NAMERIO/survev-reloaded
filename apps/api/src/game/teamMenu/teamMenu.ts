@@ -4,7 +4,7 @@ import { settings } from "../../admin/settings.ts";
 import { Player, type Socket } from "./player.ts";
 import { Room } from "./room.ts";
 
-const teamCodeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789";
+export const teamCodeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789";
 function generateTeamCode(): string {
     let str = "";
     for (let i = 0; i < 4; i++) {
@@ -148,6 +148,19 @@ export class TeamMenu {
         const room = new Room(this, roomUrl, data);
         this.rooms.set(roomUrl, room);
         return room;
+    }
+
+    /** what a shared invite link shows; undefined when the room is gone */
+    roomSummary(code: string) {
+        const room = this.rooms.get(code);
+        if (!room?.players.length) return undefined;
+        const mode = settings.modes[room.data.gameModeIdx];
+        return {
+            players: room.players.map((player) => player.name),
+            maxPlayers: room.data.maxPlayers,
+            region: room.data.region,
+            mapName: mode?.mapName,
+        };
     }
 
     removeRoom(room: Room) {
