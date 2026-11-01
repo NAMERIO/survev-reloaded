@@ -43,7 +43,7 @@ test("fitFontSize keeps the worst name inside its budget", () => {
 
 test("renders a 1200x630 png", async () => {
     const png = await renderCard(await genericCard({ title: "A", subtitle: "B", label: "stats" }));
-    expect([...png.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(Array.from(png.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
     const view = new DataView(png.buffer, png.byteOffset);
     expect([view.getUint32(16), view.getUint32(20)]).toEqual([1200, 630]);
 });
