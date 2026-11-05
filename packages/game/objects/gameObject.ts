@@ -61,6 +61,8 @@ export class ObjectRegister {
     dirtyFull = new Uint8Array(MAX_ID);
 
     deletedObjs: GameObject[] = [];
+    /** dev builds: how many deletedObjs ClientBarn dropped from the visibility bitsets this sync */
+    visibilityPurgedCount = 0;
 
     idNext = 1;
     freeLists = {} as Record<ObjectType, number[]>;
@@ -69,6 +71,7 @@ export class ObjectRegister {
         for (let i = 0; i < MAX_ID; i++) {
             this.idToObj[i] = null;
         }
+        grid.idToObj = this.idToObj;
 
         const preAllocIds = (type: ObjectType, amount: number) => {
             this.freeLists[type] = new Array(amount);
@@ -133,6 +136,8 @@ export class ObjectRegister {
             this.objects[obj.__arrayIdx] = lastObj;
             lastObj.__arrayIdx = obj.__arrayIdx;
         }
+        // the grid stores ids; an object updated after destroy() must not leave a stale one behind
+        if (obj.__onGrid) this.grid.remove(obj);
         this.idToObj[obj.__id] = null;
 
         this.freeId(obj.__type, obj.__id);
@@ -159,6 +164,14 @@ export class ObjectRegister {
     }
 
     flush() {
+        /* STRIP_FROM_PROD_SERVER:START */
+        // freeing an id a client still has a visibility bit for would let a new object inherit it
+        assert(
+            this.deletedObjs.length === this.visibilityPurgedCount,
+            "objects were deleted after ClientBarn dropped them from the visibility bitsets",
+        );
+        this.visibilityPurgedCount = 0;
+        /* STRIP_FROM_PROD_SERVER:END */
         for (let i = 0; i < this.deletedObjs.length; i++) {
             this.unregister(this.deletedObjs[i]);
         }
@@ -175,7 +188,6 @@ export abstract class BaseGameObject {
 
     __gridBounds = { min: v2.create(-1, -1), max: v2.create(-1, -1) };
     __onGrid = false;
-    __gridQueryId = 0;
     abstract bounds: AABB;
 
     readonly game: Game;
