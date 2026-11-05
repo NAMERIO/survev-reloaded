@@ -1,7 +1,6 @@
 /**
  * A set of object ids (0 to size - 1) stored as one bit per id.
- * Used for per-client visibility: comparing two of these 32 ids at a time is far cheaper than
- * diffing Sets of objects, and they're allocated once per client instead of every net sync.
+ * Used for per-client visibility, allocated once per client instead of a Set every net sync.
  */
 export class IdBitset {
     readonly words: Uint32Array;

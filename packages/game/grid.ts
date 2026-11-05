@@ -2,7 +2,8 @@ import type { AABB, Collider } from "@survev/shared/utils/coldet.ts";
 import { collider } from "@survev/shared/utils/collider.ts";
 import { math } from "@survev/shared/utils/math.ts";
 import { v2, type Vec2 } from "@survev/shared/utils/v2.ts";
-import { bitIndex, type IdBitset } from "./idBitset.ts";
+import { bitIndex } from "./idBitset.ts";
+import { Interest } from "./interest.ts";
 import type { Loot } from "./objects/loot.ts";
 
 interface GameObject {
@@ -38,12 +39,16 @@ export class Grid<T extends GameObject = GameObject> {
     private readonly _queryStamp = new Uint32Array(ID_LIMIT);
     private nextQueryId = 1;
 
+    /** which clients' cameras cover which objects; every cell change below keeps it in sync */
+    readonly interest: Interest;
+
     constructor(width: number, height: number) {
         this.width = Math.floor(width / this.cellSize);
         this.height = Math.floor(height / this.cellSize);
 
         this._stride = this.height + 1;
         this.cells = Array.from({ length: (this.width + 1) * this._stride }, () => []);
+        this.interest = new Interest(this, this.cells.length, this._stride, ID_LIMIT);
     }
 
     /** ids in cell (x, y), in query order; x in [0, width], y in [0, height]. Don't mutate. */
@@ -70,6 +75,8 @@ export class Grid<T extends GameObject = GameObject> {
             const b = obj.__gridBounds;
             this._insert(obj.__id, b.min.x, b.min.y, b.max.x, b.max.y);
             obj.__onGrid = true;
+            // clients whose camera covers its cells start seeing it
+            this.interest.objectMoved(obj.__id, b.min.x, b.min.y, b.max.x, b.max.y);
         }
     }
 
@@ -94,7 +101,8 @@ export class Grid<T extends GameObject = GameObject> {
             return;
         }
 
-        this.remove(obj);
+        // not remove(): interest compares its old and new cells in one go once it's inserted below
+        if (obj.__onGrid) this._removeFromCells(obj);
 
         objBounds.min.x = minX;
         objBounds.min.y = minY;
@@ -107,6 +115,8 @@ export class Grid<T extends GameObject = GameObject> {
         // Add it to all grid cells that it intersects
         this._insert(obj.__id, minX, minY, maxX, maxY);
         obj.__onGrid = true;
+        // only clients whose camera covered its old cells but not its new ones, or the reverse, get told
+        this.interest.objectMoved(obj.__id, minX, minY, maxX, maxY);
     }
 
     private _insert(id: number, minX: number, minY: number, maxX: number, maxY: number): void {
@@ -126,7 +136,13 @@ export class Grid<T extends GameObject = GameObject> {
     remove(obj: T): void {
         // like upstream: an object that isn't on the grid keeps its bounds
         if (!obj.__onGrid) return;
+        this._removeFromCells(obj);
+        // every client that saw it stops seeing it
+        this.interest.objectRemoved(obj.__id);
+    }
 
+    /** takes the object out of its cells without telling interest; callers do that */
+    private _removeFromCells(obj: T): void {
         const { min, max } = obj.__gridBounds;
         const id = obj.__id;
         const cells = this.cells;
@@ -321,27 +337,6 @@ export class Grid<T extends GameObject = GameObject> {
             x: this.cellX(vector.x),
             y: this.cellY(vector.y),
         };
-    }
-
-    /**
-     * Sets the bit of every object id in the cells overlapping this AABB.
-     * Covers the same cells as intersectAABBSet, without building a Set
-     */
-    markAABB(aabb: AABB, bits: IdBitset): void {
-        const minX = this.cellX(aabb.min.x);
-        const minY = this.cellY(aabb.min.y);
-        const maxX = this.cellX(aabb.max.x);
-        const maxY = this.cellY(aabb.max.y);
-        const cells = this.cells;
-        const stride = this._stride;
-
-        for (let x = minX; x <= maxX; x++) {
-            const row = x * stride;
-            for (let y = minY; y <= maxY; y++) {
-                const cell = cells[row + y];
-                for (let i = 0; i < cell.length; i++) bits.add(cell[i]);
-            }
-        }
     }
 }
 

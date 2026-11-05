@@ -61,6 +61,11 @@ export class ObjectRegister {
     dirtyFull = new Uint8Array(MAX_ID);
 
     deletedObjs: GameObject[] = [];
+    /**
+     * ids serializeObjs found dirty; nothing sets dirty flags again before flush, so ClientBarn
+     * routes these to the clients that see them
+     */
+    dirtyIds: number[] = [];
     /** dev builds: how many deletedObjs ClientBarn dropped from the visibility bitsets this sync */
     visibilityPurgedCount = 0;
 
@@ -152,13 +157,17 @@ export class ObjectRegister {
     }
 
     serializeObjs() {
+        const dirtyIds = this.dirtyIds;
+        dirtyIds.length = 0;
         for (let i = 0; i < this.objects.length; i++) {
             const obj = this.objects[i]!;
             const id = obj.__id;
             if (this.dirtyFull[id]) {
                 obj.serializeFull();
+                dirtyIds.push(id);
             } else if (this.dirtyPart[id]) {
                 obj.serializePartial();
+                dirtyIds.push(id);
             }
         }
     }

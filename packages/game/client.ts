@@ -13,7 +13,8 @@ import { util } from "@survev/shared/utils/util.ts";
 import { v2 } from "@survev/shared/utils/v2.ts";
 
 import type { Game, JoinTokenData, SpectateTokenData } from "./game.ts";
-import { bitIndex, IdBitset } from "./idBitset.ts";
+import { IdBitset } from "./idBitset.ts";
+import type { View } from "./interest.ts";
 import type { GameObject } from "./objects/gameObject.ts";
 import type { MapIndicator } from "./objects/mapIndicator.ts";
 import type { Player } from "./objects/player.ts";
@@ -40,6 +41,9 @@ export class ClientBarn {
     }
 
     sendMsgs() {
+        // hand each client's view the dirty objects it covers, before any update is built
+        this.game.grid.interest.routeDirty(this.game.objectRegister.dirtyIds);
+
         for (let i = 0; i < this.clients.length; i++) {
             const client = this.clients[i];
             if (client.socket.closed()) continue;
@@ -254,6 +258,7 @@ export class ClientBarn {
         client.spectating = undefined;
         client.disconnected = true;
         util.removeFrom(this.clients, client);
+        this.game.grid.interest.removeView(client.view);
 
         if (!client.player) return;
         const player = client.player;
@@ -342,9 +347,11 @@ export class Client {
 
     private _firstUpdate = true;
     /** objects visible at the last sync, as a bitset over object ids */
-    visibleObjects: IdBitset;
-    /** all zero between syncs, swapped with visibleObjects after each diff */
-    private _visibleScratch: IdBitset;
+    readonly visibleObjects: IdBitset;
+    /** the grid cells this client's camera covered at the last sync, and what changed since */
+    readonly view: View;
+    /** id of the active player at the last sync, visible even when it's off camera */
+    private _forcedId = 0;
     /**
      * visible objects that got unregistered (__id is now 0) before this client synced again,
      * only possible when sendMsgs returned early or for a destroyed active player
@@ -375,7 +382,7 @@ export class Client {
         this.findGameIp = findGameIp;
         this.game = game;
         this.visibleObjects = new IdBitset(game.objectRegister.idToType.length);
-        this._visibleScratch = new IdBitset(game.objectRegister.idToType.length);
+        this.view = game.grid.interest.addView();
         socket.setUserData(this);
         this.socket = socket as ClientSocket<Client>;
     }
@@ -518,15 +525,18 @@ export class Client {
         const { idToObj, dirtyFull, dirtyPart } = objectRegister;
         const { delObjIds, fullObjects, partObjects } = updateMsg;
 
-        const oldVisible = this.visibleObjects;
-        const newVisible = this._visibleScratch;
-        game.grid.markAABB(rect, newVisible);
-        // only an unregistered object can have id 0, those are tracked in _deadVisibleObjs
-        newVisible.delete(0);
+        const visible = this.visibleObjects;
+        const view = this.view;
+        game.grid.interest.setView(view, rect);
         // client crashes if active player is not visible
-        // so make sure its always added to visible objects
+        // so make sure its always added to visible objects: settle it every sync, with the
+        // previous one when it changes, so that one goes once it's off camera
         const playerId = player.__id;
-        if (playerId !== 0) newVisible.add(playerId);
+        if (playerId !== this._forcedId) {
+            if (this._forcedId !== 0) view.markChanged(this._forcedId);
+            this._forcedId = playerId;
+        }
+        if (playerId !== 0) view.markChanged(playerId);
 
         const deadVisible = this._deadVisibleObjs;
         // objects this client saw that got unregistered (id now 0) before it synced again: sent the
@@ -553,42 +563,40 @@ export class Client {
             }
         }
 
-        // diff 32 ids at a time; ids only go up to idNext, so later words are zero in both
-        const oldWords = oldVisible.words;
-        const newWords = newVisible.words;
-        const words = Math.min((objectRegister.idNext + 31) >>> 5, newWords.length);
-        for (let w = 0; w < words; w++) {
-            const oldBits = oldWords[w];
-            const newBits = newWords[w];
-            if ((oldBits | newBits) === 0) continue;
-            // leaves oldVisible all zero, ready to be the next scratch
-            oldWords[w] = 0;
-            const base = w << 5;
-
-            // visible before, not now
-            let removed = oldBits & ~newBits;
-            while (removed !== 0) {
-                const bit = removed & -removed;
-                removed ^= bit;
-                delObjIds.push(base | bitIndex(bit));
+        // dirty objects it kept seeing; the changed ones are settled below
+        const changed = view.changed;
+        const dirtyIds = view.dirtyIds;
+        for (let i = 0; i < dirtyIds.length; i++) {
+            const id = dirtyIds[i];
+            if (changed.has(id)) continue;
+            if (dirtyFull[id]) {
+                fullObjects.push(idToObj[id]!);
+            } else {
+                partObjects.push(idToObj[id]!);
             }
+        }
 
-            // visible now: new ones and fully dirty ones in full, partially dirty ones in part
-            let visible = newBits;
-            while (visible !== 0) {
-                const bit = visible & -visible;
-                visible ^= bit;
-                const id = base | bitIndex(bit);
-                if ((oldBits & bit) === 0 || dirtyFull[id]) {
+        // objects it may have started or stopped seeing since the last sync: new ones and fully
+        // dirty ones in full, partially dirty ones in part
+        const changedIds = view.changedIds;
+        for (let i = 0; i < changedIds.length; i++) {
+            const id = changedIds[i];
+            changed.delete(id);
+            if (id === playerId || view.sees(id)) {
+                if (!visible.has(id)) {
+                    visible.add(id);
+                    fullObjects.push(idToObj[id]!);
+                } else if (dirtyFull[id]) {
                     fullObjects.push(idToObj[id]!);
                 } else if (dirtyPart[id]) {
                     partObjects.push(idToObj[id]!);
                 }
+            } else if (visible.has(id)) {
+                visible.delete(id);
+                delObjIds.push(id);
             }
         }
-
-        this.visibleObjects = newVisible;
-        this._visibleScratch = oldVisible;
+        changedIds.length = 0;
 
         updateMsg.activePlayerId = player.__id;
         if (this.startedSpectating) {
